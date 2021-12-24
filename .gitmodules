@@ -1,0 +1,3 @@
+[submodule "src/external/libsurvive"]
+	path = src/external/libsurvive
+	url = git@github.com:Inspectobot/libsurvive.git

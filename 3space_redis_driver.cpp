@@ -24,23 +24,23 @@ const string ACCELEROMETER_DATA_KEY =      "sai2::3spaceSensor::data::accelerome
 const string GYROSCOPE_DATA_KEY =          "sai2::3spaceSensor::data::gyroscope";            // in local frame
 const string LINEAR_ACCELERATION_KEY =     "sai2::3spaceSensor::data::linear_acceleration";  // acceleration gravity compensated in global frame
 
-int main()
+int main(int argc, char **argv)
 {
 	TSS_ComPort port;
-	port.port_name = new char[64];
+	port.port_name = "/dev/ttyS0";
 	tss_device_id device_id;
 	TSS_ERROR error = TSS_NO_ERROR;
 
 	printf("====Creating a Three Space Device from Search====\n");
-	tss_findSensorPorts(TSS_FIND_ALL_KNOWN ^ TSS_DONGLE);
+	//tss_findSensorPorts(TSS_FIND_ALL_KNOWN ^ TSS_DONGLE);
 
-	error = tss_getNextSensorPort(port.port_name, &port.device_type, &port.connection_type);
+	/*error = tss_getNextSensorPort("/dev/ttyAMA0", &port.device_type, &port.connection_type);
 	if(error != TSS_NO_ERROR)
 	{
 		printf("Failed to get the port!\n");
 		tss_deinitAPI();
 		return 0;
-	}
+	}*/
 
 	error = tss_createSensor(port.port_name, &device_id);
 	if(error)
@@ -56,17 +56,19 @@ int main()
 	signal(SIGTERM, &sighandler);
 	signal(SIGINT, &sighandler);
 
+
 	// redis client
 	RedisClient* redis_client = new RedisClient();
 	redis_client->connect();
 
 	// set mode to IMU for fast readings
 	U32 timestamp = 0;
-	error = tss_sensor_setFilterMode(device_id, 0, &timestamp);
+	error = tss_sensor_setFilterMode(device_id, 1, &timestamp);
 	// error = tss_sensor_setUARTBaudRate(device_id, 921600, &timestamp);
 
 	// setup streaming
-	int data_to_stream = TSS_STREAM_CORRECTED_GYROSCOPE_DATA + TSS_STREAM_CORRECTED_ACCELEROMETER_DATA + TSS_STREAM_LINEAR_ACCELERATION;
+	//int data_to_stream = TSS_STREAM_CORRECTED_GYROSCOPE_DATA + TSS_STREAM_CORRECTED_ACCELEROMETER_DATA + TSS_STREAM_LINEAR_ACCELERATION;
+	int data_to_stream = TSS_STREAM_TARED_ORIENTATION_AS_EULER_ANGLES;
 	error = tss_sensor_startStreamingWired(device_id, data_to_stream, 1000, TSS_STREAM_DURATION_INFINITE, 0);
 	printf("====Starting Streaming====\n");
 
@@ -75,6 +77,8 @@ int main()
 	Eigen::Vector3d accelerometer_data = Eigen::Vector3d::Zero();
 	Eigen::Vector3d gyroscope_data = Eigen::Vector3d::Zero();
 	Eigen::Vector3d linear_acceleration = Eigen::Vector3d::Zero();
+
+	Eigen::Matrix <float, 4, 1> Orientation;
 
 	// create a timer
 	LoopTimer timer;
@@ -90,17 +94,21 @@ int main()
 		timer.waitForNextLoop();
 
 		error = tss_sensor_getLastStreamingPacket(device_id, &packet);
+		Orientation[0] = packet.taredOrientEuler[0];
+                Orientation[1] = packet.taredOrientEuler[1];
+                Orientation[2] = packet.taredOrientEuler[2];
 
-		for(int i = 0 ; i < 3 ; i++)
+
+		/*for(int i = 0 ; i < 3 ; i++)
 		{
 			accelerometer_data(i) = packet.correctedAccelerometerData[i];
 			gyroscope_data(i) = packet.correctedGyroscopeData[i];
 			linear_acceleration(i) = packet.linearAcceleration[i];
-		}
+		}*/
 
-		redis_client->setEigenMatrixJSON(ACCELEROMETER_DATA_KEY, accelerometer_data);
-		redis_client->setEigenMatrixJSON(GYROSCOPE_DATA_KEY, gyroscope_data);
-		redis_client->setEigenMatrixJSON(LINEAR_ACCELERATION_KEY, linear_acceleration);
+		redis_client->setEigenMatrixJSON(ACCELEROMETER_DATA_KEY, Orientation);
+		//redis_client->setEigenMatrixJSON(GYROSCOPE_DATA_KEY, gyroscope_data);
+		//redis_client->setEigenMatrixJSON(LINEAR_ACCELERATION_KEY, linear_acceleration);
 	}
 
 	double end_time = timer.elapsedTime();

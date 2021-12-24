@@ -16,7 +16,14 @@ endif()
 
 # Linux global build options
 add_definitions (-DLINUX)
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
+  "${CMAKE_CURRENT_SOURCE_DIR}/support/cmake")
+
+include(cxx14)
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
+add_subdirectory(src/external/libsurvive)
 
 # header search path
 include_directories (
@@ -25,6 +32,9 @@ include_directories (
   ${PROJECT_SOURCE_DIR}/include/serial
   ${PROJECT_SOURCE_DIR}/include/serial/impl
   ${PROJECT_SOURCE_DIR}/include/yost
+  ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include
+  ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include/libsurvive
+  ${PROJECT_SOURCE_DIR}/src/external/libsurvive/redist
   )
 
 # static library source files
@@ -58,4 +68,10 @@ find_library(HIREDIS_LIBRARY hiredis)
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
 add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
+
+add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
+
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY})
+
+target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY})
+
