@@ -1,3 +1,6 @@
 [submodule "src/external/libsurvive"]
 	path = src/external/libsurvive
 	url = git@github.com:Inspectobot/libsurvive.git
+[submodule "src/external/robomaster_sdk_can"]
+	path = src/external/robomaster_sdk_can
+	url = git@github.com:Inspectobot/robomaster_sdk_can.git

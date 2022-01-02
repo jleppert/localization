@@ -42,6 +42,15 @@ void RedisClient::ping() {
 	std::cout << "Reply: " << reply->str << std::endl << std::endl;
 }
 
+void RedisClient::rpush(const std::string& key, const std::string& value) {
+  // Call SET command
+  auto reply = command("RPUSH %s %s", key.c_str(), value.c_str());
+
+  // Check for errors
+  if (!reply || reply->type == REDIS_REPLY_ERROR)
+    throw std::runtime_error("RedisClient: RPUSH '" + key + "' '" + value + "' failed.");
+}
+
 std::string RedisClient::get(const std::string& key) {
 	// Call GET command
 	auto reply = command("GET %s", key.c_str());

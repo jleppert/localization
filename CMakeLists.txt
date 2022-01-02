@@ -1,17 +1,12 @@
 cmake_minimum_required (VERSION 3.0.0)
 project (YOSTLABS-3SPACE-SENSOR)
 
-# enforce build type
-if (NOT CMAKE_BUILD_TYPE)
-  set (CMAKE_BUILD_TYPE Release CACHE STRING "Setting build mode to Release" FORCE)
-endif()
-
 # output location
-# set (CMAKE_RUNTIME_OUTPUT_DIRECTORY                ${PROJECT_SOURCE_DIR}/bin/)
-# set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG          ${PROJECT_SOURCE_DIR}/bin/)
-# set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     ${PROJECT_SOURCE_DIR}/bin/)
-# set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE        ${PROJECT_SOURCE_DIR}/bin/)
-# set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_SOURCE_DIR}/bin/)
+ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY                ${PROJECT_SOURCE_DIR}/bin/)
+ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG          ${PROJECT_SOURCE_DIR}/bin/)
+ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     ${PROJECT_SOURCE_DIR}/bin/)
+ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE        ${PROJECT_SOURCE_DIR}/bin/)
+ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_SOURCE_DIR}/bin/)
 
 
 # Linux global build options
@@ -24,6 +19,7 @@ include(cxx14)
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 add_subdirectory(src/external/libsurvive)
+add_subdirectory(src/external/robomaster_sdk_can)
 
 # header search path
 include_directories (
@@ -35,6 +31,7 @@ include_directories (
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include/libsurvive
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/redist
+  ${PROJECT_SOURCE_DIR}/src/external/robomaster_sdk_can/inc
   )
 
 # static library source files
@@ -62,6 +59,10 @@ set (YOSTLABS_3SPACE_SENSOR_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 # include Eigen
 FIND_PACKAGE(Eigen3 REQUIRED)
 
+find_package(Threads REQUIRED)
+
+find_package(msgpack REQUIRED)
+
 # - hiredis
 find_library(HIREDIS_LIBRARY hiredis)
 
@@ -71,7 +72,10 @@ add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp
 
 add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
 
+add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
+
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY})
 
 target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY})
 
+target_link_libraries(robomaster_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} Threads::Threads -lmsgpackc)

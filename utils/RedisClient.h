@@ -87,6 +87,14 @@ public:
 	 * @param value  Value for key.
 	 */
 	void set(const std::string& key, const std::string& value);
+  
+  /**
+	 * Perform Redis command: RPUSH key value.
+	 *
+	 * @param key    List key to push to in Redis.
+	 * @param value  Value for list key.
+	 */
+  void rpush(const std::string& key, const std::string& value);
 
 	/**
 	 * Perform Redis command: DEL key.
@@ -250,6 +258,11 @@ public:
 	template<typename Derived>
 	inline void setEigenMatrixJSON(const std::string& key, const Eigen::MatrixBase<Derived>& value) {
 		set(key, encodeEigenMatrixJSON(value));
+	}
+
+  template<typename Derived>
+	inline void rpushEigenMatrixJSON(const std::string& key, const Eigen::MatrixBase<Derived>& value) {
+		rpush(key, encodeEigenMatrixJSON(value));
 	}
 
 	template<typename Derived>
