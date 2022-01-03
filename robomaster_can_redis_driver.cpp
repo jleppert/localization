@@ -3,8 +3,6 @@
 #include "iostream"
 #include <sstream>
 
-#include "utils/RedisClient.h"
-
 #include <os_generic.h>
 
 #include <assert.h>
@@ -27,11 +25,16 @@
 #include <deque>
 #include <iomanip>
 
-  using robomaster::dds::metadata;
-  using robomaster::dds::wheel_encoders;
-  using robomaster::dds::battery;
+#include <sw/redis++/redis++.h>
 
-RedisClient* odometryMonitorRedisClient;
+using robomaster::dds::metadata;
+using robomaster::dds::wheel_encoders;
+using robomaster::dds::battery;
+
+using namespace std;
+using namespace sw::redis;
+
+Redis* odometryMonitorRedisClient;
 
 std::mutex mutex1;
 
@@ -43,8 +46,6 @@ void intHandler(int dummy) {
 	}
 	keepRunning = 0;
 }
-
-using namespace std;
 
 const string WHEEL_ENCODER_KEY = "rover_wheel_encoder";
 const string WHEEL_VELOCITY_KEY = "rover_pose_config";
@@ -98,6 +99,9 @@ void wheelMonitor(const metadata&, const wheel_encoders& wheel_encoders) {
 
   std::stringstream packed;
   msgpack::pack(packed, message);
+  
+  packed.seekg(0);
+
   odometryMonitorRedisClient->set(WHEEL_ENCODER_KEY, packed.str());
 }
 
@@ -112,13 +116,14 @@ void batteryMonitor(const metadata&, const battery& battery) {
 
   std::stringstream packed;
   msgpack::pack(packed, message);
+  
+  packed.seekg(0);
+
   odometryMonitorRedisClient->set(BATTERY_STATE_KEY, packed.str());
 }
 
 void odometryMonitorTask() {
-  odometryMonitorRedisClient = new RedisClient();
-	odometryMonitorRedisClient->connect();
- 
+  odometryMonitorRedisClient = new Redis("tcp://127.0.0.1:6379");
 
   auto can_in = can_streambuf("can0", 0x202);
   auto can_cfg = can_streambuf("can0", 0x201);

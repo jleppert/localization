@@ -21,6 +21,8 @@ set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 add_subdirectory(src/external/libsurvive)
 add_subdirectory(src/external/robomaster_sdk_can)
 
+find_path(REDIS_PLUS_PLUS_HEADER sw)
+
 # header search path
 include_directories (
   ${PROJECT_SOURCE_DIR}/include
@@ -32,6 +34,7 @@ include_directories (
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include/libsurvive
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/redist
   ${PROJECT_SOURCE_DIR}/src/external/robomaster_sdk_can/inc
+  ${REDIS_PLUS_PLUS_HEADERS}
   )
 
 # static library source files
@@ -66,6 +69,8 @@ find_package(msgpack REQUIRED)
 # - hiredis
 find_library(HIREDIS_LIBRARY hiredis)
 
+find_library(REDIS_PLUS_PLUS_LIB redis++)
+
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
 add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
@@ -74,8 +79,12 @@ add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.c
 
 add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
 
+set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
+
+set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
+
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY})
 
-target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY})
+target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB})
 
-target_link_libraries(robomaster_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} Threads::Threads -lmsgpackc)
+target_link_libraries(robomaster_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Threads::Threads -lmsgpackc)

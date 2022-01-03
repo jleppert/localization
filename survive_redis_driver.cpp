@@ -7,14 +7,16 @@
 
 #define EIGEN_MATRIXBASE_PLUGIN "MatrixBaseAddons.h"
 
-#include "utils/RedisClient.h"
-
 #include <survive_api.h>
 #include <os_generic.h>
 
 #include <assert.h>
 #include <signal.h>
 #include <stdlib.h>
+
+#include <sw/redis++/redis++.h>
+
+using namespace sw::redis;
 
 static volatile int keepRunning = 1;
 SurviveSimpleContext *actx; 
@@ -38,24 +40,25 @@ static void log_fn(SurviveSimpleContext *actx, SurviveLogLevel logLevel, const c
 }
 
 struct PoseMessage {
-  PoseMessage(FLT timestamp, SurvivePose pose) {
-    timestamp = timestamp;
+  PoseMessage(FLT _timestamp, SurvivePose _pose) {
+    timestamp = _timestamp;
 
-    Pose[0] = pose.Pos[0];
-    Pose[1] = pose.Pos[1];
-    Pose[2] = pose.Pos[2];
+    pos[0] = _pose.Pos[0];
+    pos[1] = _pose.Pos[1];
+    pos[2] = _pose.Pos[2];
 
-    Pose[4] = pose.Rot[0];
-    Pose[5] = pose.Rot[1];
-    Pose[6] = pose.Rot[2];
-    Pose[7] = pose.Rot[3];
+    rot[0] = _pose.Rot[0];
+    rot[1] = _pose.Rot[1];
+    rot[2] = _pose.Rot[2];
+    rot[3] = _pose.Rot[3];
   }
 
   FLT timestamp;
 
-  Eigen::Matrix<FLT, 8, 1> Pose;
+  std::array<FLT, 3> pos;
+  std::array<FLT, 4> rot;
 
-  MSGPACK_DEFINE_MAP(Pose)
+  MSGPACK_DEFINE_MAP(timestamp, pos, rot)
 };
 
 int main(int argc, char **argv) {
@@ -63,8 +66,7 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-	RedisClient* redis_client = new RedisClient();
-	redis_client->connect();
+  auto redis = Redis("tcp://127.0.0.1:6379");
 
 	actx = survive_simple_init_with_logger(argc, argv, log_fn);
 	
@@ -95,7 +97,10 @@ int main(int argc, char **argv) {
         std::stringstream packed;
         msgpack::pack(packed, message);
 
-        redis_client->rpush(BASE_POSE_KEY, packed.str());
+        packed.seekg(0);
+
+        redis.set(POSE_DATA_KEY, packed.str());
+
       } else {
 
         SurvivePose pose = pose_event->pose;
@@ -106,7 +111,9 @@ int main(int argc, char **argv) {
         std::stringstream packed;
         msgpack::pack(packed, message);
 
-        redis_client->set(POSE_DATA_KEY, packed.str());
+        packed.seekg(0);
+
+        redis.set(POSE_DATA_KEY, packed.str());
 
         printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
@@ -145,7 +152,7 @@ int main(int argc, char **argv) {
 				   survive_simple_object_get_type(cfg_event->object),
 				   survive_simple_object_get_subtype(cfg_event->object));
 
-      redis_client->set(POSE_CONFIG_KEY, cfg_event->cfg);
+      redis.set(POSE_CONFIG_KEY, cfg_event->cfg);
 			break;
 		}
 		case SurviveSimpleEventType_DeviceAdded: {
