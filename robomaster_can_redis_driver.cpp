@@ -20,8 +20,6 @@
 #include <chrono>
 #include <thread>
 
-#include <mutex>
-
 #include <deque>
 #include <iomanip>
 
@@ -35,8 +33,7 @@ using namespace std;
 using namespace sw::redis;
 
 Redis* odometryMonitorRedisClient;
-
-std::mutex mutex1;
+Redis* commandReceiverRedisClient;
 
 static volatile int keepRunning = 1;
 
@@ -48,12 +45,18 @@ void intHandler(int dummy) {
 }
 
 const string WHEEL_ENCODER_KEY = "rover_wheel_encoder";
-const string WHEEL_VELOCITY_KEY = "rover_pose_config";
 const string BATTERY_STATE_KEY = "rover_battery_state";
+const string WHEEL_VELOCITY_KEY = "rover_wheel_velocity";
 
-/*void wheelVelocityTask() {
-	wheelVelocityRedisClient = new RedisClient();
-	wheelVelocityRedisClient->connect();
+struct wheelVelocityMessage {
+  uint32_t timestamp; 
+  int16_t velocity[4];  
+
+  MSGPACK_DEFINE_MAP(timestamp, velocity)
+};
+
+void wheelVelocityTask() {
+  commandReceiverRedisClient = new Redis("tcp://127.0.0.1:6379");
 
   auto can = can_streambuf("can0", 0x201);
   std::iostream io(&can);
@@ -62,13 +65,33 @@ const string BATTERY_STATE_KEY = "rover_battery_state";
 
   chassis.send_workmode(1);
 
+  printf("Started wheel velocity task \n");
+
   while(true) {
     chassis.send_heartbeat();
-    chassis.send_wheel_speed(30, 0, 0, 0);
+    
+    auto val = commandReceiverRedisClient->get(WHEEL_VELOCITY_KEY);
+
+    if(val) {
+      string s = *val;
+      msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+
+      msgpack::object deserialized = oh.get();
+
+      wheelVelocityMessage message { 0, { 0, 0, 0, 0 } };
+      deserialized.convert(message);
+
+      chassis.send_wheel_speed(
+        message.velocity[0], 
+        message.velocity[1], 
+        message.velocity[2], 
+        message.velocity[3]
+      );
+    }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-}*/
-
+}
 
 struct wheelEncoderMessage {
   int16_t rpm[4];
@@ -87,7 +110,6 @@ struct batteryStateMessage {
 
   MSGPACK_DEFINE_MAP(adc_val, temperature, current, percent) 
 };
-
 
 int wheelCount = 0;
 void wheelMonitor(const metadata&, const wheel_encoders& wheel_encoders) {
@@ -137,7 +159,7 @@ void odometryMonitorTask() {
 
   out.flush();
 
-  printf("started battery monitor!");
+  printf("Started odometry monitor task \n");
 
 
   while (true) {
@@ -150,13 +172,11 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-  setbuf(stdout, NULL);
-
-  printf("started!");
-
   thread odometryMonitorThread(odometryMonitorTask);
+  thread wheelVelocityThread(wheelVelocityTask);
 
   odometryMonitorThread.join();
+  wheelVelocityThread.join();
 
 	return 0;
 }
