@@ -98,8 +98,10 @@ struct wheelEncoderMessage {
   uint16_t enc[4];
   //uint32_t timer[4];
   //uint8_t state[4];
+
+  uint32_t timestamp;
   
-  MSGPACK_DEFINE_MAP(rpm, enc)
+  MSGPACK_DEFINE_MAP(timestamp, rpm, enc)
 };
 
 struct batteryStateMessage {
@@ -108,16 +110,20 @@ struct batteryStateMessage {
   int32_t current;
   uint8_t percent;
 
-  MSGPACK_DEFINE_MAP(adc_val, temperature, current, percent) 
+  uint32_t timestamp;
+
+  MSGPACK_DEFINE_MAP(timestamp, adc_val, temperature, current, percent) 
 };
 
 int wheelCount = 0;
-void wheelMonitor(const metadata&, const wheel_encoders& wheel_encoders) {
+void wheelMonitor(const metadata& metadata, const wheel_encoders& wheel_encoders) {
   
   wheelEncoderMessage message;
  
   memcpy(&message.rpm, wheel_encoders.rpm, sizeof(message.rpm)); 
   memcpy(&message.enc, wheel_encoders.enc, sizeof(message.enc)); 
+  
+  memcpy(&message.timestamp, &metadata.time_ms, sizeof(message.timestamp)); 
 
   std::stringstream packed;
   msgpack::pack(packed, message);
@@ -128,13 +134,15 @@ void wheelMonitor(const metadata&, const wheel_encoders& wheel_encoders) {
 }
 
 
-void batteryMonitor(const metadata&, const battery& battery) {
+void batteryMonitor(const metadata& metadata, const battery& battery) {
   batteryStateMessage message;
  
   memcpy(&message.adc_val, &battery.adc_val, sizeof(message.adc_val)); 
   memcpy(&message.temperature, &battery.temperature, sizeof(message.temperature)); 
   memcpy(&message.current, &battery.current, sizeof(message.current)); 
   memcpy(&message.percent, &battery.percent, sizeof(message.percent)); 
+
+  memcpy(&message.timestamp, &metadata.time_ms, sizeof(message.timestamp)); 
 
   std::stringstream packed;
   msgpack::pack(packed, message);

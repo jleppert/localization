@@ -55,8 +55,8 @@ struct PoseMessage {
 
   FLT timestamp;
 
-  std::array<FLT, 3> pos;
-  std::array<FLT, 4> rot;
+  std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
+  std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
 
   MSGPACK_DEFINE_MAP(timestamp, pos, rot)
 };
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
 	struct SurviveSimpleEvent event = {};
 	
 	while (survive_simple_wait_for_event(actx, &event) != SurviveSimpleEventType_Shutdown) {
-		printf("%d Got event!\n", event.event_type);
+		//printf("%d Got event!\n", event.event_type);
 
 		switch (event.event_type) {
 		case SurviveSimpleEventType_PoseUpdateEvent: {
@@ -91,15 +91,35 @@ int main(int argc, char **argv) {
         
         FLT timecode = survive_simple_run_time(actx);
         SurvivePose pose = pose_event->pose;
-        
+       
+        printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
+             survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
+             pose.Rot[0], pose.Rot[1], pose.Rot[2], pose.Rot[3]);
+
+
         PoseMessage message = {timecode, pose};
+
+        printf("Timecode %7.3f \n", timecode);
+        printf("BASE POS: %f %f %f \n", message.pos[0], message.pos[1], message.pos[2]);
+        printf("BASE ROT: %f %f %f %f \n", message.rot[0], message.rot[1], message.rot[2], message.rot[3]);
+
 
         std::stringstream packed;
         msgpack::pack(packed, message);
 
         packed.seekg(0);
 
-        redis.set(POSE_DATA_KEY, packed.str());
+        redis.set(BASE_POSE_KEY + "-" + survive_simple_object_name(pose_event->object) + '-' + survive_simple_serial_number(pose_event->object), packed.str());
+
+        packed.seekg(0);
+
+        std::string str(packed.str());
+
+        msgpack::object_handle oh =
+        msgpack::unpack(str.data(), str.size());
+
+        msgpack::object deserialized = oh.get();
+        std::cout << deserialized << std::endl;
 
       } else {
 
@@ -115,9 +135,9 @@ int main(int argc, char **argv) {
 
         redis.set(POSE_DATA_KEY, packed.str());
 
-        printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
+        /*printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
-             pose.Rot[0], pose.Rot[1], pose.Rot[2], pose.Rot[3]);
+             pose.Rot[0], pose.Rot[1], pose.Rot[2], pose.Rot[3]);*/
       }
 			break;
 		}
