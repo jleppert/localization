@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "iostream"
+#include <sstream>
+
+#include <msgpack.hpp>
+
+#define EIGEN_MATRIXBASE_PLUGIN "MatrixBaseAddons.h"
 
 #include "utils/RedisClient.h"
 
@@ -32,14 +37,32 @@ static void log_fn(SurviveSimpleContext *actx, SurviveLogLevel logLevel, const c
 	fprintf(stderr, "(%7.3f) SimpleApi: %s\n", survive_simple_run_time(actx), msg);
 }
 
+struct PoseMessage {
+  PoseMessage(FLT timestamp, SurvivePose pose) {
+    timestamp = timestamp;
+
+    Pose[0] = pose.Pos[0];
+    Pose[1] = pose.Pos[1];
+    Pose[2] = pose.Pos[2];
+
+    Pose[4] = pose.Rot[0];
+    Pose[5] = pose.Rot[1];
+    Pose[6] = pose.Rot[2];
+    Pose[7] = pose.Rot[3];
+  }
+
+  FLT timestamp;
+
+  Eigen::Matrix<FLT, 8, 1> Pose;
+
+  MSGPACK_DEFINE_MAP(Pose)
+};
 
 int main(int argc, char **argv) {
-	// set up signal handler
 	signal(SIGABRT, intHandler);
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-	// redis client
 	RedisClient* redis_client = new RedisClient();
 	redis_client->connect();
 
@@ -53,8 +76,6 @@ int main(int argc, char **argv) {
 		printf("Found '%s'\n", survive_simple_object_name(it));
 	}
 
-	Eigen::Matrix <FLT, 8, 1> Pose;
-
 	struct SurviveSimpleEvent event = {};
 	
 	while (survive_simple_wait_for_event(actx, &event) != SurviveSimpleEventType_Shutdown) {
@@ -63,40 +84,29 @@ int main(int argc, char **argv) {
 		switch (event.event_type) {
 		case SurviveSimpleEventType_PoseUpdateEvent: {
 			const struct SurviveSimplePoseUpdatedEvent *pose_event = survive_simple_get_pose_updated_event(&event);
-			
-
+	
       if(survive_simple_object_get_type(pose_event->object) == SurviveSimpleObject_LIGHTHOUSE) {
         
         FLT timecode = survive_simple_run_time(actx);
         SurvivePose pose = pose_event->pose;
         
-        Pose[0] = timecode;
-        Pose[1] = pose.Pos[0];
-        Pose[2] = pose.Pos[1];
-        Pose[3] = pose.Pos[2];
+        PoseMessage message = {timecode, pose};
 
-        Pose[4] = pose.Rot[0];
-        Pose[5] = pose.Rot[1];
-        Pose[6] = pose.Rot[2];
-        Pose[7] = pose.Rot[3];
-        
-        redis_client->rpushEigenMatrixJSON(BASE_POSE_KEY, Pose);
+        std::stringstream packed;
+        msgpack::pack(packed, message);
+
+        redis_client->rpush(BASE_POSE_KEY, packed.str());
       } else {
 
         SurvivePose pose = pose_event->pose;
         FLT timecode = pose_event->time;
-        
-        Pose[0] = timecode;
-        Pose[1] = pose.Pos[0];
-        Pose[2] = pose.Pos[1];
-        Pose[3] = pose.Pos[2];
+       
+        PoseMessage message = {timecode, pose};
 
-        Pose[4] = pose.Rot[0];
-        Pose[5] = pose.Rot[1];
-        Pose[6] = pose.Rot[2];
-        Pose[7] = pose.Rot[3];
-        
-        redis_client->setEigenMatrixJSON(POSE_DATA_KEY, Pose);
+        std::stringstream packed;
+        msgpack::pack(packed, message);
+
+        redis_client->set(POSE_DATA_KEY, packed.str());
 
         printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
