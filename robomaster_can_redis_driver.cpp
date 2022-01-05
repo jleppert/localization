@@ -29,8 +29,12 @@ using robomaster::dds::metadata;
 using robomaster::dds::wheel_encoders;
 using robomaster::dds::battery;
 
+using namespace std::chrono;
+
 using namespace std;
 using namespace sw::redis;
+
+int64_t startupTimestamp;
 
 Redis* odometryMonitorRedisClient;
 Redis* commandReceiverRedisClient;
@@ -46,7 +50,9 @@ void intHandler(int dummy) {
 
 const string WHEEL_ENCODER_KEY = "rover_wheel_encoder";
 const string BATTERY_STATE_KEY = "rover_battery_state";
-const string WHEEL_VELOCITY_KEY = "rover_wheel_velocity";
+const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
+const string WHEEL_VELOCITY_SET_KEY = "rover_wheel_velocity_output";
+const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 struct wheelVelocityMessage {
   uint32_t timestamp; 
@@ -58,6 +64,8 @@ struct wheelVelocityMessage {
 void wheelVelocityTask() {
   commandReceiverRedisClient = new Redis("tcp://127.0.0.1:6379");
 
+  commandReceiverRedisClient->set(STARTUP_TIMESTAMP_KEY, std::to_string(startupTimestamp));
+
   auto can = can_streambuf("can0", 0x201);
   std::iostream io(&can);
 
@@ -67,10 +75,22 @@ void wheelVelocityTask() {
 
   printf("Started wheel velocity task \n");
 
+  // reset wheel velocity command message
+  wheelVelocityMessage message { 0, { 0, 0, 0, 0 } };
+
+  std::stringstream packed;
+  msgpack::pack(packed, message);
+  
+  packed.seekg(0);
+
+  commandReceiverRedisClient->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+
+  printf("Reset wheel speed command key \n");
+
   while(true) {
     chassis.send_heartbeat();
     
-    auto val = commandReceiverRedisClient->get(WHEEL_VELOCITY_KEY);
+    auto val = commandReceiverRedisClient->get(WHEEL_VELOCITY_COMMAND_KEY);
 
     if(val) {
       string s = *val;
@@ -87,6 +107,16 @@ void wheelVelocityTask() {
         message.velocity[2], 
         message.velocity[3]
       );
+
+      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+      message.timestamp = uint32_t(currentMicro - startupTimestamp);
+
+      std::stringstream packed;
+      msgpack::pack(packed, message);
+  
+      packed.seekg(0);
+
+      commandReceiverRedisClient->set(WHEEL_VELOCITY_SET_KEY, packed.str()); 
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -169,7 +199,6 @@ void odometryMonitorTask() {
 
   printf("Started odometry monitor task \n");
 
-
   while (true) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 10));
   }
@@ -179,6 +208,10 @@ int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
+
+  startupTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count(); 
+  
+  printf("Startup timestamp: %s \n", std::to_string(startupTimestamp).c_str());
 
   thread odometryMonitorThread(odometryMonitorTask);
   thread wheelVelocityThread(wheelVelocityTask);
