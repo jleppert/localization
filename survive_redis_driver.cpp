@@ -32,6 +32,7 @@ void intHandler(int dummy) {
 using namespace std;
 
 const string POSE_DATA_KEY = "rover_pose";
+const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string POSE_CONFIG_KEY = "rover_pose_config";
 const string BASE_POSE_KEY = "rover_base_pose";
 
@@ -60,6 +61,23 @@ struct PoseMessage {
 
   MSGPACK_DEFINE_MAP(timestamp, pos, rot)
 };
+
+struct VelocityMessage {
+  VelocityMessage(FLT _timestamp, SurviveVelocity _pose) {
+    timestamp = _timestamp;
+
+    pos[0] = _pose.Pos[0];
+    pos[1] = _pose.Pos[1];
+    pos[2] = _pose.Pos[2];
+  }
+
+  FLT timestamp;
+
+  std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
+
+  MSGPACK_DEFINE_MAP(timestamp, pos)
+};
+
 
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
@@ -124,16 +142,25 @@ int main(int argc, char **argv) {
       } else {
 
         SurvivePose pose = pose_event->pose;
+        SurviveVelocity velocity = pose_event->velocity;
+
         FLT timecode = pose_event->time;
        
         PoseMessage message = {timecode, pose};
+        VelocityMessage velMessage = {timecode, velocity};
 
         std::stringstream packed;
         msgpack::pack(packed, message);
 
         packed.seekg(0);
 
+        std::stringstream packedVel;
+        msgpack::pack(packedVel, velMessage);
+
+        packedVel.seekg(0);
+
         redis.set(POSE_DATA_KEY, packed.str());
+        redis.set(POSE_VELOCITY_DATA_KEY, packedVel.str());
 
         /*printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
