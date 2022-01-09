@@ -8,6 +8,9 @@
 #define EIGEN_MATRIXBASE_PLUGIN "MatrixBaseAddons.h"
 
 #include <survive_api.h>
+
+#include <survive.h>
+
 #include <os_generic.h>
 
 #include <assert.h>
@@ -63,19 +66,24 @@ struct PoseMessage {
 };
 
 struct VelocityMessage {
-  VelocityMessage(FLT _timestamp, SurviveVelocity _pose) {
+  VelocityMessage(FLT _timestamp, SurviveVelocity _pose, SurviveAngularVelocity _theta) {
     timestamp = _timestamp;
 
     pos[0] = _pose.Pos[0];
     pos[1] = _pose.Pos[1];
     pos[2] = _pose.Pos[2];
+
+    theta[0] = _theta[0];
+    theta[1] = _theta[1];
+    theta[2] = _theta[2];
   }
 
   FLT timestamp;
 
-  std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
+  std::array<FLT, 3> pos   = {0.0, 0.0, 0.0};
+  std::array<FLT, 3> theta = {0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, pos)
+  MSGPACK_DEFINE_MAP(timestamp, pos, theta)
 };
 
 
@@ -98,6 +106,9 @@ int main(int argc, char **argv) {
 
 	struct SurviveSimpleEvent event = {};
 	
+  SurvivePose lastPose = { .Pos = { 0.0, 0.0, 0.0 }, .Rot = { 0.0, 0.0, 0.0, 0.0 } };
+  FLT lastPoseMessageTime = 0.0;
+
 	while (survive_simple_wait_for_event(actx, &event) != SurviveSimpleEventType_Shutdown) {
 		//printf("%d Got event!\n", event.event_type);
 
@@ -108,6 +119,7 @@ int main(int argc, char **argv) {
       if(survive_simple_object_get_type(pose_event->object) == SurviveSimpleObject_LIGHTHOUSE) {
         
         FLT timecode = survive_simple_run_time(actx);
+
         SurvivePose pose = pose_event->pose;
        
         printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
@@ -147,7 +159,14 @@ int main(int argc, char **argv) {
         FLT timecode = pose_event->time;
        
         PoseMessage message = {timecode, pose};
-        VelocityMessage velMessage = {timecode, velocity};
+
+        SurviveAngularVelocity thetaVel = {0.0, 0.0, 0.0};
+
+        if(lastPoseMessageTime != 0.0) {
+          survive_find_ang_velocity(thetaVel, timecode - lastPoseMessageTime, lastPose.Rot, pose.Rot); 
+        }
+
+        VelocityMessage velMessage = {timecode, velocity, thetaVel};
 
         std::stringstream packed;
         msgpack::pack(packed, message);
@@ -161,6 +180,9 @@ int main(int argc, char **argv) {
 
         redis.set(POSE_DATA_KEY, packed.str());
         redis.set(POSE_VELOCITY_DATA_KEY, packedVel.str());
+
+        lastPoseMessageTime = timecode;
+        lastPose = pose;
 
         /*printf("%s %s (%7.3f): %f %f %f %f %f %f %f\n", survive_simple_object_name(pose_event->object),
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
