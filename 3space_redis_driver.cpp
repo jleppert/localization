@@ -1,16 +1,15 @@
-/********************************************//**
-* This example demonstrates streaming basic data from the sensor
-* This is compatible with all sensors plugged in via USB or Bluetooth
-* Will not work with the dongle or wireless sensor wirelessly see
-* streaming_information_wireless for a wireless example.
-***********************************************/
 #include <stdio.h>
 #include <string.h>
 #include "iostream"
 #include "threespace_api_export.h"
 
-#include "utils/RedisClient.h"
 #include "utils/LoopTimer.h"
+
+#include <msgpack.hpp>
+
+#include <survive.h>
+
+#include <sw/redis++/redis++.h>
 
 #include <chrono>
 
@@ -19,10 +18,29 @@ bool runloop = true;
 void sighandler(int){runloop = false;}
 
 using namespace std;
+using namespace std::chrono;
+using namespace sw::redis;
 
-const string ACCELEROMETER_DATA_KEY =      "sai2::3spaceSensor::data::accelerometer";        // in local frame
-const string GYROSCOPE_DATA_KEY =          "sai2::3spaceSensor::data::gyroscope";            // in local frame
-const string LINEAR_ACCELERATION_KEY =     "sai2::3spaceSensor::data::linear_acceleration";  // acceleration gravity compensated in global frame
+Redis* redis;
+
+struct IMUMessage {
+  IMUMessage(FLT _timestamp, TSS_Stream_Packet packet) {
+    timestamp = _timestamp;
+
+    ahrs[0] = packet.taredOrientEuler[0];
+    ahrs[1] = packet.taredOrientEuler[1];
+    ahrs[2] = packet.taredOrientEuler[2];
+  }
+
+  FLT timestamp = 0.0;
+
+  std::array<FLT, 3> ahrs = {0.0, 0.0, 0.0};
+
+
+  MSGPACK_DEFINE_MAP(timestamp, ahrs)
+};
+
+const string ROVER_IMU = "rover_imu";
 
 int main(int argc, char **argv)
 {
@@ -56,10 +74,8 @@ int main(int argc, char **argv)
 	signal(SIGTERM, &sighandler);
 	signal(SIGINT, &sighandler);
 
-
 	// redis client
-	RedisClient* redis_client = new RedisClient();
-	redis_client->connect();
+  redis = new Redis("tcp://127.0.0.1:6379");
 
 	// set mode to IMU for fast readings
 	U32 timestamp = 0;
@@ -74,41 +90,35 @@ int main(int argc, char **argv)
 
 	TSS_Stream_Packet packet;
 
-	Eigen::Vector3d accelerometer_data = Eigen::Vector3d::Zero();
-	Eigen::Vector3d gyroscope_data = Eigen::Vector3d::Zero();
-	Eigen::Vector3d linear_acceleration = Eigen::Vector3d::Zero();
-
-	Eigen::Matrix <float, 4, 1> Orientation;
-
 	// create a timer
 	LoopTimer timer;
 	timer.initializeTimer();
-	timer.setLoopFrequency(1000); 
+	timer.setLoopFrequency(100); 
 	double current_time = 0;
 	double prev_time = 0;
 	double dt = 0;
 	bool fTimerDidSleep = true;
 	double start_time = timer.elapsedTime(); //secs
-	while(runloop)
+	
+  int64_t startupTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+  while(runloop)
 	{
 		timer.waitForNextLoop();
 
 		error = tss_sensor_getLastStreamingPacket(device_id, &packet);
-		Orientation[0] = packet.taredOrientEuler[0];
-                Orientation[1] = packet.taredOrientEuler[1];
-                Orientation[2] = packet.taredOrientEuler[2];
+		
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    uint32_t timestamp = uint32_t(currentMicro - startupTimestamp);
 
+    IMUMessage message = {timestamp, packet};
 
-		/*for(int i = 0 ; i < 3 ; i++)
-		{
-			accelerometer_data(i) = packet.correctedAccelerometerData[i];
-			gyroscope_data(i) = packet.correctedGyroscopeData[i];
-			linear_acceleration(i) = packet.linearAcceleration[i];
-		}*/
+    std::stringstream packed;
+    msgpack::pack(packed, message);
 
-		redis_client->setEigenMatrixJSON(ACCELEROMETER_DATA_KEY, Orientation);
-		//redis_client->setEigenMatrixJSON(GYROSCOPE_DATA_KEY, gyroscope_data);
-		//redis_client->setEigenMatrixJSON(LINEAR_ACCELERATION_KEY, linear_acceleration);
+    packed.seekg(0);
+
+    redis->set(ROVER_IMU, packed.str());
 	}
 
 	double end_time = timer.elapsedTime();

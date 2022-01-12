@@ -73,17 +73,19 @@ find_library(REDIS_PLUS_PLUS_LIB redis++)
 
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
-add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
+add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
 
-add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
+add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp)
 
-add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/RedisClient.cpp)
+add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp)
+
+set_target_properties(3space_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
-target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY})
+target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
 target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB})
 
