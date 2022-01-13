@@ -15,7 +15,7 @@ add_definitions (-DLINUX)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
   "${CMAKE_CURRENT_SOURCE_DIR}/support/cmake")
 
-include(cxx14)
+#include(cxx14)
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 add_subdirectory(src/external/libsurvive)
@@ -60,11 +60,13 @@ set (YOSTLABS_3SPACE_SENSOR_DEFINITIONS ${PROJECT_DEFINITIONS})
 set (YOSTLABS_3SPACE_SENSOR_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 
 # include Eigen
-FIND_PACKAGE(Eigen3 REQUIRED)
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
 find_package(Threads REQUIRED)
 
 find_package(msgpack REQUIRED)
+
+find_package(wpilib REQUIRED)
 
 # - hiredis
 find_library(HIREDIS_LIBRARY hiredis)
@@ -73,11 +75,16 @@ find_library(REDIS_PLUS_PLUS_LIB redis++)
 
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
+
+add_executable(mecanum_drive_controller ${PROJECT_SOURCE_DIR}/mecanum_drive_controller.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
+
 add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
 
 add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp)
 
 add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp)
+
+set_target_properties(mecanum_drive_controller PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(3space_redis_driver PROPERTIES CXX_STANDARD 17)
 
@@ -85,8 +92,10 @@ set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
+target_link_libraries(mecanum_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc)
+
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
-target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB})
+target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
 target_link_libraries(robomaster_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Threads::Threads -lmsgpackc)
