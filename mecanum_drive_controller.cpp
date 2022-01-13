@@ -15,7 +15,7 @@
 
 #include <Eigen/Dense>
 
-#include <wpi/numbers>
+#include "utils/LoopTimer.h"
 
 #include <frc/MathUtil.h>
 
@@ -41,9 +41,12 @@
 
 #include <wpi/numbers>
 
+#include <chrono>
+
 #define FLT float
 
 using namespace sw::redis;
+using namespace std::chrono;
 
 static volatile int keepRunning = 1;
 
@@ -155,19 +158,40 @@ int main(int argc, char **argv) {
 
   constexpr auto kDt = 0.02_s;
 
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(100); 
+
   auto totalTime = trajectory.TotalTime();
 
-  for (size_t i = 0; i < (totalTime / kDt).value(); ++i) {
-    auto state = trajectory.Sample(kDt * i);
+  int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
-    auto targetChassisSpeeds = controller.Calculate(robotPose, state, 0_rad);
+  while(keepRunning) {
+    timer.waitForNextLoop();
+    
+    int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    int64_t dt = currentTime - lastTime;
 
-    auto targetWheelSpeeds = m_kinematics.ToWheelSpeeds(targetChassisSpeeds);
+    lastTime = currentTime;
 
-    //robotPose = robotPose.Exp(frc::Twist2d{vx * kDt, vy * kDt, omega * kDt});
+    int64_t elapsedTime = currentTime - startTime;
+
+    if(totalTime > (units::second_t (elapsedTime * 1000000))) {
+      auto state = trajectory.Sample(units::second_t (dt * 1000000));
+
+      auto targetChassisSpeeds = controller.Calculate(robotPose, state, 0_rad);
+      
+      auto targetWheelSpeeds = m_kinematics.ToWheelSpeeds(targetChassisSpeeds);
+
+    }
+
+
   }
 
-  auto& endPose = trajectory.States().back().pose;
+  double end_time = timer.elapsedTime();
+
+  //auto& endPose = trajectory.States().back().pose;
 
 
 	return 0;
