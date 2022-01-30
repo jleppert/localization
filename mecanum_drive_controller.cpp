@@ -173,9 +173,9 @@ frc::Pose2d getCurrentPose() {
 
   //std::cout << "pose2d rotation" << std::endl << heading.Radians().value() << std::endl;
 
-  //frc::Rotation2d heading2 = frc::Rotation2d{0_deg};
+  frc::Rotation2d heading2 = frc::Rotation2d{0_deg};
 
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
+  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading2};
 
   return robotPose;
 }
@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
   
       packed.seekg(0);
 
-      //redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+      redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
 
         packed.seekg(0);
 
