@@ -189,7 +189,6 @@ int main(int argc, char **argv) {
 
   redis = new Redis("tcp://127.0.0.1:6379");
 
-
   frc::HolonomicDriveController controller{
       frc2::PIDController{1.5, 0.0, 0.0}, 
 
@@ -200,7 +199,6 @@ int main(int argc, char **argv) {
           frc::TrapezoidProfile<units::radian>::Constraints{ kMaxAngularSpeed, kMaxAngularAcceleration } }};
 
   frc::Pose2d robotPose = getCurrentPose();
-
 
   auto waypoints = std::vector{robotPose,
                                frc::Pose2d{0.5_m, 0.0_m, robotPose.Rotation() }};
@@ -219,13 +217,13 @@ int main(int argc, char **argv) {
   int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
-  printf("total time: %f \n", totalTime);
+  printf("total time: %f \n", (double)totalTime);
 
   frc::Pose2d startingRobotPose = getCurrentPose();
 
   while(keepRunning) {
     timer.waitForNextLoop();
-    
+
     int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
     int64_t dt = currentTime - lastTime;
 
@@ -234,6 +232,14 @@ int main(int argc, char **argv) {
     int64_t elapsedTime = currentTime - startTime;
 
     frc::Pose2d robotPose = getCurrentPose();
+
+    if (abs(robotPose.X().value()) > 0.5 || abs(robotPose.Y().value()) > 0.5) {
+      std::cout << "Out of bounds!" << std::endl;
+
+      stopWheels();
+
+      continue;
+    }
     
     printf("elapsed time: %ld \n", elapsedTime);
     //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
