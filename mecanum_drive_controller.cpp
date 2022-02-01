@@ -31,7 +31,7 @@
 
 #include <frc/geometry/Translation2d.h>
 #include <frc/geometry/Pose2d.h>
-#include "frc/geometry/Rotation2d.h"
+#include <frc/geometry/Rotation2d.h>
 
 #include <units/acceleration.h>
 #include <units/angle.h>
@@ -43,6 +43,7 @@
 #include <units/math.h>
 
 #include <wpi/numbers>
+#include <wpi/json.h>
 
 #include <math.h>
 
@@ -54,6 +55,8 @@
 
 using namespace sw::redis;
 using namespace std::chrono;
+
+using json = wpi::json;
 
 static volatile int keepRunning = 1;
 
@@ -68,6 +71,8 @@ using namespace std;
 
 const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
+const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
+const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 
 struct PoseMessage {
   FLT timestamp;
@@ -135,9 +140,6 @@ int16_t velocityToRPM(units::meters_per_second_t speed) {
   return int16_t ((60 * speed) / ((45 * 0.001 * M_PI) * 2));
 }
 
-const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
-
-
 Redis* redis;
 
 void stopWheels() {
@@ -180,6 +182,9 @@ frc::Pose2d getCurrentPose() {
   return robotPose;
 }
 
+
+#define CONTROLLER_UPDATE_RATE_IN_MS 100
+
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
 	signal(SIGTERM, intHandler);
@@ -206,18 +211,30 @@ int main(int argc, char **argv) {
   auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
       waypoints, {0.4_mps, 0.4_mps_sq});
 
+  units::time::second_t totalTime = trajectory.TotalTime();
+
+  json sampledTrajectoryJSON = json::array(); 
+  for (int i = 0; i <= int(ceil(totalTime.value() / (CONTROLLER_UPDATE_RATE_IN_MS * 0.001))); i++) {
+    frc::Trajectory::State state = trajectory.Sample(units::second_t (i * CONTROLLER_UPDATE_RATE_IN_MS * 0.001));
+
+    json stateTrajectoryJSON;
+    frc::to_json(stateTrajectoryJSON, state);
+
+    sampledTrajectoryJSON.push_back(stateTrajectoryJSON);
+  }
+
+  redis->set(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
+
   constexpr auto kDt = 0.02_s;
 
   LoopTimer timer;
 	timer.initializeTimer();
-	timer.setLoopFrequency(100); 
-
-  auto totalTime = trajectory.TotalTime();
+	timer.setLoopFrequency(CONTROLLER_UPDATE_RATE_IN_MS); 
 
   int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
-  printf("total time: %f \n", (double)totalTime);
+  printf("total time: %f \n", (double)totalTime.value());
 
   frc::Pose2d startingRobotPose = getCurrentPose();
 
