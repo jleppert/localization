@@ -133,11 +133,10 @@ struct wheelVelocityMessage {
 };
 
 # define TAU M_PI * 2
+# define WHEEL_RADIUS 45
 
 int16_t velocityToRPM(units::meters_per_second_t speed) {
-  //return int16_t ((speed * 60) / TAU); 
-
-  return int16_t ((60 * speed) / ((45 * 0.001 * M_PI) * 2));
+  return int16_t ((60 * speed) / ((WHEEL_RADIUS * 0.001 * M_PI) * 2));
 }
 
 Redis* redis;
@@ -165,19 +164,27 @@ frc::Pose2d getCurrentPose() {
   PoseMessage poseMessage { 0, { 0, 0, 0 }, { 0, 0, 0, 0 } };
   deserialized.convert(poseMessage);
 
-  printf("xy: %f %f \n", poseMessage.pos[0] * -1, poseMessage.pos[1] * -1);
+  //printf("xy: %f %f \n", poseMessage.pos[0] * -1, poseMessage.pos[1] * -1);
 
   Eigen::Quaternionf orientation = Eigen::Quaternionf(poseMessage.rot[0], poseMessage.rot[1], poseMessage.rot[2], poseMessage.rot[3]);
+  
+
   auto euler = orientation.toRotationMatrix().eulerAngles(0, 1, 2);
-  std::cout << "Euler from quaternion in roll, pitch, yaw"<< std::endl << euler << std::endl;
+  //std::cout << "Euler from quaternion in roll, pitch, yaw"<< std::endl << euler << std::endl;
 
   frc::Rotation2d heading = frc::Rotation2d(units::radian_t (orientation.toRotationMatrix().eulerAngles(0, 1, 2)[2]));
 
+  frc::Rotation2d heading3 = frc::Rotation2d(units::radian_t (
+    atan2(2*((poseMessage.rot[0]*poseMessage.rot[3])+(poseMessage.rot[1]*poseMessage.rot[2])),1-(2*((poseMessage.rot[2]*poseMessage.rot[2])+(poseMessage.rot[3]*poseMessage.rot[3]))))));
+
   //std::cout << "pose2d rotation" << std::endl << heading.Radians().value() << std::endl;
+
+  std::cout << "heading3" << std::endl << heading3.Radians().value() << std::endl;
+
 
   frc::Rotation2d heading2 = frc::Rotation2d{0_deg};
 
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading2};
+  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading3};
 
   return robotPose;
 }
@@ -200,7 +207,7 @@ int main(int argc, char **argv) {
       frc2::PIDController{1.0, 0.0, 0.0},
       
       frc::ProfiledPIDController<units::radian>{
-          0.1, 0.0, 0.0,
+          1.5, 0.0, 0.0,
           frc::TrapezoidProfile<units::radian>::Constraints{ kMaxAngularSpeed, kMaxAngularAcceleration } }};
 
   frc::Pose2d robotPose = getCurrentPose();
@@ -223,7 +230,7 @@ int main(int argc, char **argv) {
     sampledTrajectoryJSON.push_back(stateTrajectoryJSON);
   }
 
-  redis->set(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
+  redis->publish(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
 
   constexpr auto kDt = 0.02_s;
 
@@ -250,7 +257,7 @@ int main(int argc, char **argv) {
 
     frc::Pose2d robotPose = getCurrentPose();
 
-    if (abs(robotPose.X().value()) > 0.5 || abs(robotPose.Y().value()) > 0.5) {
+    if (abs(robotPose.X().value()) > 0.6 || abs(robotPose.Y().value()) > 0.6) {
       std::cout << "Out of bounds!" << std::endl;
 
       stopWheels();
@@ -258,7 +265,7 @@ int main(int argc, char **argv) {
       continue;
     }
     
-    printf("elapsed time: %ld \n", elapsedTime);
+    //printf("elapsed time: %ld \n", elapsedTime);
     //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
       frc::Trajectory::State state = trajectory.Sample(units::second_t (dt * 1000000));
      
@@ -278,7 +285,7 @@ int main(int argc, char **argv) {
         }
       };
 
-      printf("%f %f %f %f", (double)targetWheelSpeeds.frontRight, (double)targetWheelSpeeds.frontLeft, (double)targetWheelSpeeds.rearLeft, (double)targetWheelSpeeds.rearRight);
+      //printf("%f %f %f %f", (double)targetWheelSpeeds.frontRight, (double)targetWheelSpeeds.frontLeft, (double)targetWheelSpeeds.rearLeft, (double)targetWheelSpeeds.rearRight);
 
       std::stringstream packed;
       msgpack::pack(packed, message);
