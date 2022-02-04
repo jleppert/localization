@@ -328,12 +328,17 @@ int main(int argc, char **argv) {
 	signal(SIGINT, intHandler);
 
   setbuf(stdout, NULL);
+  
+  ConnectionOptions redisConnectionOpts;
 
-  redis = new Redis("tcp://127.0.0.1:6379");
+  redisConnectionOpts.host = "127.0.0.1";
+  redisConnectionOpts.port = 6379;
+  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1); 
+  
+  redis = new Redis(redisConnectionOpts);
 
   stopWheels();
 
-  //exit(1);
   auto parameters = redis->get(PARAMETERS_KEY);
 
   if(parameters) {
@@ -343,15 +348,38 @@ int main(int argc, char **argv) {
   } else {
     
     ParametersMessage parametersMessage;
+
+    std::stringstream packed;
+    msgpack::pack(packed, parametersMessage);
+  
+    packed.seekg(0);
+
+    std::string str(packed.str());
+
+    msgpack::object_handle oh =
+      msgpack::unpack(str.data(), str.size());
+
+    msgpack::object deserialized = oh.get();
+    std::cout << "reset parameters: " << deserialized << std::endl;
+
+    redis->set(PARAMETERS_KEY, packed.str());
+
     updateParameters(parametersMessage);
   }
 
-  //auto sub = redis->subscriber();
+  auto subscriber = redis->subscriber();
 
-  //sub.on_message([](std::string channel, std::string msg) {
-    
-  // Process message of MESSAGE type.
-  //});
+  subscriber.on_message([](std::string channel, std::string msg) {
+    updateParametersFromString(msg);
+
+    msgpack::object_handle oh =
+      msgpack::unpack(msg.data(), msg.size());
+
+    msgpack::object deserialized = oh.get();
+    std::cout << "updated parameters: " << deserialized << std::endl;
+  });
+
+  subscriber.subscribe(PARAMETERS_KEY);
 
   frc::Pose2d robotPose = getCurrentPose();
 
@@ -387,6 +415,10 @@ int main(int argc, char **argv) {
   frc::Pose2d startingRobotPose = getCurrentPose();
 
   while(keepRunning) {
+    try {
+      subscriber.consume();
+    } catch (const Error &err) {}
+
     timer.waitForNextLoop();
 
     int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -434,7 +466,6 @@ int main(int argc, char **argv) {
       packed.seekg(0);
 
       redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
-  string p = *parameters;
 
         packed.seekg(0);
 
