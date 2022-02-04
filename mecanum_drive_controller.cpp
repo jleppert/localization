@@ -58,6 +58,10 @@ using namespace std::chrono;
 
 using json = wpi::json;
 
+using radians_per_second_squared_t =
+    units::compound_unit<units::radians,
+                         units::inverse<units::squared<units::second>>>;
+
 static volatile int keepRunning = 1;
 
 void intHandler(int dummy) {
@@ -73,6 +77,7 @@ const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
+const string PARAMETERS_KEY = "rover_parameters";
 
 struct PoseMessage {
   FLT timestamp;
@@ -92,38 +97,72 @@ struct VelocityMessage {
   MSGPACK_DEFINE_MAP(timestamp, pos, theta)
 };
 
-static constexpr units::meter_t kTolerance{1 / 12.0};
-static constexpr units::radian_t kAngularTolerance{2.0 * wpi::numbers::pi / 180.0};
- 
-constexpr auto kTrackWidth =
-    200_mm;  // Distance between centers of right and left wheels on robot
-constexpr auto kWheelBase =
-    200_mm;  // Distance between centers of front and back wheels on robot
+struct ParametersMessage {
+  FLT timestamp = 0.0;
 
-using radians_per_second_squared_t =
-    units::compound_unit<units::radians,
-                         units::inverse<units::squared<units::second>>>;
+  double maxVelocity = 0.3;
+  double maxAcceleration = 0.3;
+  double maxAngularVelocity = 0.3;
+  double maxAngularAcceleration = 0.3;
 
-constexpr double kWheelDiameterMeters = 90 * 0.001;
+  double trackWidth = 0.2;
+  double wheelBase  = 0.2;
 
-constexpr auto kMaxSpeed = units::meters_per_second_t(0.3);
-constexpr auto kMaxAcceleration = units::meters_per_second_squared_t(0.3);
-constexpr auto kMaxAngularSpeed = units::radians_per_second_t(0.3);
-constexpr auto kMaxAngularAcceleration =
-    units::unit_t<radians_per_second_squared_t>(0.3);
+  double wheelDiameter = 0.09;
 
-constexpr double kPXController = 0.25;
-constexpr double kPYController = 0.25;
-constexpr double kPThetaController = 0.5;
+  int controllerUpdateRate = 100;
 
-const frc::MecanumDriveKinematics kDriveKinematics{
-    frc::Translation2d(kWheelBase / 2, kTrackWidth / 2),
-    frc::Translation2d(kWheelBase / 2, -kTrackWidth / 2),
-    frc::Translation2d(-kWheelBase / 2, kTrackWidth / 2),
-    frc::Translation2d(-kWheelBase / 2, -kTrackWidth / 2)
+  double maxXPosition = 0.6;
+  double maxYPosition = 0.6;
+
+  double linearTolerance = 0.01;
+  double angularTolerance = 2.0 * M_PI / 180;
+
+  double xControllerP = 1.5;
+  double xControllerI = 0.0;
+  double xControllerD = 0.0;
+
+  double yControllerP = 1.0;
+  double yControllerI = 0.0;
+  double yControllerD = 0.0;
+
+  double thetaControllerP = 1.5;
+  double thetaControllerI = 0.0;
+  double thetaControllerD = 0.0;
+
+  MSGPACK_DEFINE_MAP(
+    timestamp,
+
+    maxVelocity,
+    maxAcceleration,
+    maxAngularVelocity,
+    maxAngularAcceleration,
+
+    trackWidth,
+    wheelBase,
+    wheelDiameter,
+
+    controllerUpdateRate,
+
+    maxXPosition,
+    maxYPosition,
+
+    linearTolerance,
+    angularTolerance,
+
+    xControllerP,
+    xControllerI,
+    xControllerD,
+
+    yControllerP,
+    yControllerI,
+    yControllerD,
+
+    thetaControllerP,
+    thetaControllerI,
+    thetaControllerD
+  )
 };
-
-frc::MecanumDriveKinematics m_kinematics{ kDriveKinematics };
 
 struct wheelVelocityMessage {
   uint32_t timestamp; 
@@ -152,7 +191,6 @@ void stopWheels() {
   redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
 }
 
-
 frc::Pose2d getCurrentPose() {
   auto pose = redis->get(POSE_DATA_KEY);
     
@@ -164,33 +202,125 @@ frc::Pose2d getCurrentPose() {
   PoseMessage poseMessage { 0, { 0, 0, 0 }, { 0, 0, 0, 0 } };
   deserialized.convert(poseMessage);
 
-  //printf("xy: %f %f \n", poseMessage.pos[0] * -1, poseMessage.pos[1] * -1);
-
-  Eigen::Quaternionf orientation = Eigen::Quaternionf(poseMessage.rot[0], poseMessage.rot[1], poseMessage.rot[2], poseMessage.rot[3]);
-  
-
-  auto euler = orientation.toRotationMatrix().eulerAngles(0, 1, 2);
-  //std::cout << "Euler from quaternion in roll, pitch, yaw"<< std::endl << euler << std::endl;
-
-  frc::Rotation2d heading = frc::Rotation2d(units::radian_t (orientation.toRotationMatrix().eulerAngles(0, 1, 2)[2]));
-
-  frc::Rotation2d heading3 = frc::Rotation2d(units::radian_t (
+  frc::Rotation2d heading = frc::Rotation2d(units::radian_t (
     atan2(2*((poseMessage.rot[0]*poseMessage.rot[3])+(poseMessage.rot[1]*poseMessage.rot[2])),1-(2*((poseMessage.rot[2]*poseMessage.rot[2])+(poseMessage.rot[3]*poseMessage.rot[3]))))));
 
-  //std::cout << "pose2d rotation" << std::endl << heading.Radians().value() << std::endl;
+  //frc::Rotation2d noHeading = frc::Rotation2d{0_deg};
 
-  std::cout << "heading3" << std::endl << heading3.Radians().value() << std::endl;
-
-
-  frc::Rotation2d heading2 = frc::Rotation2d{0_deg};
-
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading3};
+  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
 
   return robotPose;
 }
 
-
 #define CONTROLLER_UPDATE_RATE_IN_MS 100
+
+ParametersMessage lastParametersMessage;
+
+units::meters_per_second_t maxVelocity;
+units::meters_per_second_squared_t maxAcceleration;
+units::radians_per_second_t maxAngularVelocity;
+units::unit_t<radians_per_second_squared_t> maxAngularAcceleration;
+
+units::meter_t trackWidth;
+units::meter_t wheelBase;
+units::meter_t wheelDiameter;
+
+int controllerUpdateRate;
+
+double maxXPosition;
+double maxYPosition;
+
+units::meter_t linearTolerance;
+units::radian_t angularTolerance;
+
+double xControllerP;
+double xControllerI;
+double xControllerD;
+
+double yControllerP;
+double yControllerI;
+double yControllerD;
+
+double thetaControllerP;
+double thetaControllerI;
+double thetaControllerD;
+
+frc::MecanumDriveKinematics* driveKinematics;
+frc::HolonomicDriveController* controller;
+
+frc2::PIDController* xController;
+frc2::PIDController* yController;
+frc::ProfiledPIDController<units::radian>* thetaController;
+
+frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
+
+void updateParameters(ParametersMessage parametersMessage) {
+  lastParametersMessage = parametersMessage;
+
+  maxVelocity = units::meters_per_second_t (parametersMessage.maxVelocity);
+  maxAcceleration = units::meters_per_second_squared_t (parametersMessage.maxAcceleration);
+  maxAngularVelocity = units::radians_per_second_t (parametersMessage.maxAngularVelocity);
+  maxAngularAcceleration = units::unit_t<radians_per_second_squared_t>(parametersMessage.maxAngularAcceleration);
+
+  trackWidth = units::meter_t (parametersMessage.trackWidth);
+  wheelBase =  units::meter_t (parametersMessage.wheelBase);
+  wheelDiameter = units::meter_t (parametersMessage.wheelDiameter);
+
+  linearTolerance = units::meter_t (parametersMessage.linearTolerance);
+  angularTolerance = units::radian_t (parametersMessage.angularTolerance);
+  
+  maxXPosition = parametersMessage.maxXPosition;
+  maxYPosition = parametersMessage.maxYPosition;
+
+  driveKinematics = new frc::MecanumDriveKinematics(
+    frc::Translation2d(wheelBase / 2, trackWidth / 2),
+    frc::Translation2d(wheelBase / 2, -trackWidth / 2),
+    frc::Translation2d(-wheelBase / 2, trackWidth / 2),
+    frc::Translation2d(-wheelBase / 2, -trackWidth / 2)
+  );
+
+  xControllerP = parametersMessage.xControllerP;
+  xControllerI = parametersMessage.xControllerI;
+  xControllerD = parametersMessage.xControllerD;
+
+  xController = new frc2::PIDController(xControllerP, xControllerI, xControllerD);
+
+  yControllerP = parametersMessage.yControllerP;
+  yControllerI = parametersMessage.yControllerI;
+  yControllerD = parametersMessage.yControllerD;
+
+  yController = new frc2::PIDController(yControllerP, yControllerI, yControllerD);
+
+  thetaControllerP = parametersMessage.thetaControllerP;
+  thetaControllerI = parametersMessage.thetaControllerI;
+  thetaControllerD = parametersMessage.thetaControllerD;
+
+  thetaConstraints = new frc::TrapezoidProfile<units::radian>::Constraints(maxAngularVelocity, maxAngularAcceleration);
+
+  thetaController = new frc::ProfiledPIDController<units::radian>(
+    thetaControllerP,
+    thetaControllerI,
+    thetaControllerD,
+    *thetaConstraints
+  );
+
+  controller = new frc::HolonomicDriveController(
+    *xController,
+    *yController,
+    *thetaController
+  );
+}
+
+void updateParametersFromString(string parametersString) {
+  msgpack::object_handle oh = msgpack::unpack(parametersString.data(), parametersString.size());
+
+  msgpack::object deserialized = oh.get();
+
+  ParametersMessage parametersMessage;
+  deserialized.convert(parametersMessage);
+
+  updateParameters(parametersMessage);
+}
 
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
@@ -201,14 +331,27 @@ int main(int argc, char **argv) {
 
   redis = new Redis("tcp://127.0.0.1:6379");
 
-  frc::HolonomicDriveController controller{
-      frc2::PIDController{1.5, 0.0, 0.0}, 
+  stopWheels();
 
-      frc2::PIDController{1.0, 0.0, 0.0},
-      
-      frc::ProfiledPIDController<units::radian>{
-          1.5, 0.0, 0.0,
-          frc::TrapezoidProfile<units::radian>::Constraints{ kMaxAngularSpeed, kMaxAngularAcceleration } }};
+  //exit(1);
+  auto parameters = redis->get(PARAMETERS_KEY);
+
+  if(parameters) {
+    string parametersString = *parameters;
+
+    updateParametersFromString(parametersString);
+  } else {
+    
+    ParametersMessage parametersMessage;
+    updateParameters(parametersMessage);
+  }
+
+  //auto sub = redis->subscriber();
+
+  //sub.on_message([](std::string channel, std::string msg) {
+    
+  // Process message of MESSAGE type.
+  //});
 
   frc::Pose2d robotPose = getCurrentPose();
 
@@ -231,8 +374,6 @@ int main(int argc, char **argv) {
   }
 
   redis->publish(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
-
-  constexpr auto kDt = 0.02_s;
 
   LoopTimer timer;
 	timer.initializeTimer();
@@ -269,10 +410,10 @@ int main(int argc, char **argv) {
     //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
       frc::Trajectory::State state = trajectory.Sample(units::second_t (dt * 1000000));
      
-
-      frc::ChassisSpeeds targetChassisSpeeds = controller.Calculate(robotPose, state, startingRobotPose.Rotation());
+     // continue;
+      frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose, state, startingRobotPose.Rotation());
       
-      frc::MecanumDriveWheelSpeeds targetWheelSpeeds = m_kinematics.ToWheelSpeeds(targetChassisSpeeds);
+      frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
       
       wheelVelocityMessage message = { 
         uint32_t(elapsedTime), 
@@ -293,6 +434,7 @@ int main(int argc, char **argv) {
       packed.seekg(0);
 
       redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+  string p = *parameters;
 
         packed.seekg(0);
 
