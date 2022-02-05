@@ -315,6 +315,8 @@ void updateParametersFromString(string parametersString) {
   msgpack::object_handle oh = msgpack::unpack(parametersString.data(), parametersString.size());
 
   msgpack::object deserialized = oh.get();
+  
+  std::cout << "updated parameters: " << deserialized << std::endl;
 
   ParametersMessage parametersMessage;
   deserialized.convert(parametersMessage);
@@ -371,12 +373,6 @@ int main(int argc, char **argv) {
 
   subscriber.on_message([](std::string channel, std::string msg) {
     updateParametersFromString(msg);
-
-    msgpack::object_handle oh =
-      msgpack::unpack(msg.data(), msg.size());
-
-    msgpack::object deserialized = oh.get();
-    std::cout << "updated parameters: " << deserialized << std::endl;
   });
 
   subscriber.subscribe(PARAMETERS_KEY);
