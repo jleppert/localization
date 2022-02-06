@@ -77,7 +77,9 @@ const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
+
 const string PARAMETERS_KEY = "rover_parameters";
+const string TRAJECTORY_KEY = "rover_trajectory";
 
 struct PoseMessage {
   FLT timestamp;
@@ -254,6 +256,8 @@ frc::ProfiledPIDController<units::radian>* thetaController;
 
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 
+std::vector<frc::Pose2d> activeWaypoints;
+
 void updateParameters(ParametersMessage parametersMessage) {
   lastParametersMessage = parametersMessage;
 
@@ -324,6 +328,44 @@ void updateParametersFromString(string parametersString) {
   updateParameters(parametersMessage);
 }
 
+void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
+  
+  activeWaypoints.clear();
+  
+  json waypointJSON = json::parse(waypointsJSONString);
+  
+  for(json::iterator it = waypointJSON.begin(); it != waypointJSON.end(); ++it) {
+    frc::Pose2d p;
+
+    frc::from_json(it.value(), p);
+
+    activeWaypoints.push_back(p);
+  }
+}
+
+void dumpWaypoints() {
+  for(frc::Pose2d p : activeWaypoints) {
+    json waypointJSON;
+    frc::to_json(waypointJSON, p);
+
+    std::cout << "waypoint" << waypointJSON.dump() << std::endl;
+  }
+}
+
+enum messageTypes {
+  PARAMETERS_MESSAGE,
+  TRAJECTORY_MESSAGE,
+
+  UNKNOWN_MESSAGE
+};
+
+messageTypes getMessageType(std::string const& messageType) {
+  if(messageType == PARAMETERS_KEY) return PARAMETERS_MESSAGE;
+  if(messageType == TRAJECTORY_KEY) return TRAJECTORY_MESSAGE;
+
+  return UNKNOWN_MESSAGE;
+}
+
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
 	signal(SIGTERM, intHandler);
@@ -369,21 +411,43 @@ int main(int argc, char **argv) {
     updateParameters(parametersMessage);
   }
 
+  frc::Pose2d robotPose = getCurrentPose();
+
+  auto waypoints = redis->get(TRAJECTORY_KEY);
+
+  if(waypoints) {
+    string waypointsString = *waypoints;
+
+    updateActiveWaypointsFromJSON(waypointsString);
+
+  } else {
+    activeWaypoints.push_back(robotPose);
+    activeWaypoints.push_back(frc::Pose2d{0.5_m, 0.0_m, robotPose.Rotation()}); 
+  }
+
   auto subscriber = redis->subscriber();
 
   subscriber.on_message([](std::string channel, std::string msg) {
-    updateParametersFromString(msg);
+    switch (getMessageType(channel)) {
+      case PARAMETERS_MESSAGE:
+        updateParametersFromString(msg);
+        
+        break;
+        
+      case TRAJECTORY_MESSAGE:
+        std::cout << "got trajectory!" << std::endl;
+
+        updateActiveWaypointsFromJSON(msg);
+
+        break;
+    }
   });
 
   subscriber.subscribe(PARAMETERS_KEY);
-
-  frc::Pose2d robotPose = getCurrentPose();
-
-  auto waypoints = std::vector{robotPose,
-                               frc::Pose2d{0.5_m, 0.0_m, robotPose.Rotation() }};
+  subscriber.subscribe(TRAJECTORY_KEY);
 
   auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
-      waypoints, {0.4_mps, 0.4_mps_sq});
+      activeWaypoints, {0.4_mps, 0.4_mps_sq});
 
   units::time::second_t totalTime = trajectory.TotalTime();
 
