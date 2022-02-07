@@ -26,6 +26,7 @@
 #include <frc/kinematics/MecanumDriveWheelSpeeds.h>
 
 #include <frc/trajectory/Trajectory.h>
+#include <frc/trajectory/TrajectoryConfig.h>
 #include <frc/trajectory/TrajectoryGenerator.h>
 #include <frc/trajectory/TrapezoidProfile.h>
 
@@ -73,6 +74,8 @@ void intHandler(int dummy) {
 
 using namespace std;
 
+const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
+
 const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
@@ -80,6 +83,8 @@ const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 
 const string PARAMETERS_KEY = "rover_parameters";
 const string TRAJECTORY_KEY = "rover_trajectory";
+
+const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 struct PoseMessage {
   FLT timestamp;
@@ -97,6 +102,84 @@ struct VelocityMessage {
   std::array<FLT, 3> theta = {0.0, 0.0, 0.0};
 
   MSGPACK_DEFINE_MAP(timestamp, pos, theta)
+};
+
+struct ControllerStateMessage {
+  ControllerStateMessage(
+    int64_t _timestamp,
+    
+    double _xPositionError,
+    double _xVelocityError,
+    double _yPositionError,
+    double _yVelocityError,
+    double _thetaPositionError,
+    double _thetaVelocityError,
+    double _xSetpoint,
+    double _ySetpoint,
+    double _thetaSetpoint,
+    double _xAtSetpoint,
+    double _yAtSetpoint,
+    double _thetaAtSetpoint
+  ) {
+    timestamp = _timestamp;
+
+    xPositionError = _xPositionError;
+    xVelocityError = _xVelocityError;
+    
+    yPositionError = _yPositionError;
+    yVelocityError = _yVelocityError;
+    
+    thetaPositionError = _thetaPositionError;
+    thetaVelocityError = _thetaVelocityError;
+    
+    xSetpoint = _xSetpoint;
+    ySetpoint = _ySetpoint;
+    thetaSetpoint = _thetaSetpoint;
+
+    xAtSetpoint = _xAtSetpoint;
+    yAtSetpoint = _yAtSetpoint;
+    thetaAtSetpoint = _thetaAtSetpoint;
+  }
+
+  int64_t timestamp = 0;
+
+  double xPositionError = 0;
+  double xVelocityError = 0;
+
+  double yPositionError = 0;
+  double yVelocityError = 0;
+
+  double thetaPositionError = 0;
+  double thetaVelocityError = 0;
+
+  double xSetpoint = 0;
+  double ySetpoint = 0;
+  double thetaSetpoint = 0;
+
+  bool xAtSetpoint = false;
+  bool yAtSetpoint = false;
+  bool thetaAtSetpoint = false;
+
+  MSGPACK_DEFINE_MAP(
+    timestamp, 
+
+    xPositionError,
+    xVelocityError,
+
+    yPositionError,
+    yVelocityError,
+
+    thetaPositionError,
+    thetaVelocityError,
+
+    xSetpoint,
+    ySetpoint,
+    thetaSetpoint,
+
+    xAtSetpoint,
+    yAtSetpoint,
+    thetaAtSetpoint
+  )
 };
 
 struct ParametersMessage {
@@ -214,7 +297,7 @@ frc::Pose2d getCurrentPose() {
   return robotPose;
 }
 
-#define CONTROLLER_UPDATE_RATE_IN_MS 100
+int64_t startupTimestamp;
 
 ParametersMessage lastParametersMessage;
 
@@ -283,36 +366,58 @@ void updateParameters(ParametersMessage parametersMessage) {
     frc::Translation2d(-wheelBase / 2, -trackWidth / 2)
   );
 
+  controllerUpdateRate = parametersMessage.controllerUpdateRate;
+
   xControllerP = parametersMessage.xControllerP;
   xControllerI = parametersMessage.xControllerI;
   xControllerD = parametersMessage.xControllerD;
-
-  xController = new frc2::PIDController(xControllerP, xControllerI, xControllerD);
+  
+  if(xController == NULL) {
+    xController = new frc2::PIDController(xControllerP, xControllerI, xControllerD);
+  } else {
+    xController->SetPID(xControllerP, xControllerI, xControllerD);
+  }
 
   yControllerP = parametersMessage.yControllerP;
   yControllerI = parametersMessage.yControllerI;
   yControllerD = parametersMessage.yControllerD;
 
-  yController = new frc2::PIDController(yControllerP, yControllerI, yControllerD);
+  if(yController == NULL) {
+    yController = new frc2::PIDController(yControllerP, yControllerI, yControllerD);
+  } else {
+    yController->SetPID(yControllerP, yControllerI, yControllerD);
+  }
 
   thetaControllerP = parametersMessage.thetaControllerP;
   thetaControllerI = parametersMessage.thetaControllerI;
   thetaControllerD = parametersMessage.thetaControllerD;
 
-  thetaConstraints = new frc::TrapezoidProfile<units::radian>::Constraints(maxAngularVelocity, maxAngularAcceleration);
+  if(thetaConstraints == NULL) {
+    thetaConstraints = new frc::TrapezoidProfile<units::radian>::Constraints(maxAngularVelocity, maxAngularAcceleration);
+  } else {
+    thetaConstraints->maxVelocity = maxAngularVelocity;
+    thetaConstraints->maxAcceleration = maxAngularAcceleration;
+  }
 
-  thetaController = new frc::ProfiledPIDController<units::radian>(
-    thetaControllerP,
-    thetaControllerI,
-    thetaControllerD,
-    *thetaConstraints
-  );
 
-  controller = new frc::HolonomicDriveController(
-    *xController,
-    *yController,
-    *thetaController
-  );
+  if(thetaController == NULL) {
+    thetaController = new frc::ProfiledPIDController<units::radian>(
+      thetaControllerP,
+      thetaControllerI,
+      thetaControllerD,
+      *thetaConstraints
+    );
+  } else {
+    thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
+  }
+
+  if(controller == NULL) {
+    controller = new frc::HolonomicDriveController(
+      *xController,
+      *yController,
+      *thetaController
+    );
+  }
 }
 
 void updateParametersFromString(string parametersString) {
@@ -333,13 +438,16 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
   activeWaypoints.clear();
   
   json waypointJSON = json::parse(waypointsJSONString);
+
+  if(waypointJSON.find("waypoints") != waypointJSON.end()) {
   
-  for(json::iterator it = waypointJSON.begin(); it != waypointJSON.end(); ++it) {
-    frc::Pose2d p;
+    for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
+      frc::Pose2d p;
 
-    frc::from_json(it.value(), p);
+      frc::from_json(it.value(), p);
 
-    activeWaypoints.push_back(p);
+      activeWaypoints.push_back(p);
+    }
   }
 }
 
@@ -348,8 +456,60 @@ void dumpWaypoints() {
     json waypointJSON;
     frc::to_json(waypointJSON, p);
 
-    std::cout << "waypoint" << waypointJSON.dump() << std::endl;
+    std::cout << "waypoints: " << waypointJSON.dump() << std::endl;
   }
+}
+
+void publishControlState() {
+  int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t timestamp = currentTimestamp - startupTimestamp;
+
+  double xPositionError = xController->GetPositionError();
+  double xVelocityError = xController->GetVelocityError();
+  
+  double yPositionError = yController->GetPositionError();
+  double yVelocityError = yController->GetVelocityError();
+  
+  frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
+  frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
+  
+  double xSetpoint = xController->GetSetpoint();
+  double ySetpoint = yController->GetSetpoint();
+  
+  frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
+
+  double xAtSetpoint = xController->AtSetpoint();
+  double yAtSetpoint = yController->AtSetpoint();
+  double thetaAtSetpoint = thetaController->AtSetpoint();
+
+
+  ControllerStateMessage message = {
+    timestamp,
+
+    xPositionError,    
+    xVelocityError,
+
+    yPositionError,
+    yVelocityError,
+
+    double (thetaPositionError),
+    double (thetaVelocityError),
+
+    xSetpoint,
+    ySetpoint,
+    double (thetaState.position),
+
+    xAtSetpoint,
+    yAtSetpoint,
+    thetaAtSetpoint
+  };
+
+  std::stringstream packed;
+  msgpack::pack(packed, message);
+
+  packed.seekg(0);
+
+  redis->publish(CONTROLLER_STATE_KEY, packed.str());
 }
 
 enum messageTypes {
@@ -380,6 +540,17 @@ int main(int argc, char **argv) {
   redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1); 
   
   redis = new Redis(redisConnectionOpts);
+
+  auto timestamp = redis->get(STARTUP_TIMESTAMP_KEY);
+  if(timestamp) {
+    string timestampString = *timestamp;
+    
+    startupTimestamp = atoll(timestampString.c_str());
+  } else {
+    std::cout << "Startup timestamp not set or invalid" << std::endl;
+
+    exit(0);
+  }
 
   stopWheels();
 
@@ -425,6 +596,8 @@ int main(int argc, char **argv) {
     activeWaypoints.push_back(frc::Pose2d{0.5_m, 0.0_m, robotPose.Rotation()}); 
   }
 
+  dumpWaypoints();
+  
   auto subscriber = redis->subscriber();
 
   subscriber.on_message([](std::string channel, std::string msg) {
@@ -450,10 +623,10 @@ int main(int argc, char **argv) {
       activeWaypoints, {0.4_mps, 0.4_mps_sq});
 
   units::time::second_t totalTime = trajectory.TotalTime();
-
+  
   json sampledTrajectoryJSON = json::array(); 
-  for (int i = 0; i <= int(ceil(totalTime.value() / (CONTROLLER_UPDATE_RATE_IN_MS * 0.001))); i++) {
-    frc::Trajectory::State state = trajectory.Sample(units::second_t (i * CONTROLLER_UPDATE_RATE_IN_MS * 0.001));
+  for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
+    frc::Trajectory::State state = trajectory.Sample(units::second_t (i * controllerUpdateRate * 0.001));
 
     json stateTrajectoryJSON;
     frc::to_json(stateTrajectoryJSON, state);
@@ -462,10 +635,10 @@ int main(int argc, char **argv) {
   }
 
   redis->publish(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
-
+  
   LoopTimer timer;
 	timer.initializeTimer();
-	timer.setLoopFrequency(CONTROLLER_UPDATE_RATE_IN_MS); 
+	timer.setLoopFrequency(controllerUpdateRate);
 
   int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -490,13 +663,15 @@ int main(int argc, char **argv) {
 
     frc::Pose2d robotPose = getCurrentPose();
 
-    if (abs(robotPose.X().value()) > 0.6 || abs(robotPose.Y().value()) > 0.6) {
+    if (abs(robotPose.X().value()) > maxXPosition || abs(robotPose.Y().value()) > maxYPosition) {
       std::cout << "Out of bounds!" << std::endl;
 
       stopWheels();
 
       continue;
     }
+
+    publishControlState();
     
     //printf("elapsed time: %ld \n", elapsedTime);
     //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
