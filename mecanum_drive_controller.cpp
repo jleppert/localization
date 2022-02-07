@@ -79,6 +79,8 @@ const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
+
+const string TRAJECTORY_PROFILE_KEY = "rover_trajectory_profile";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 
 const string PARAMETERS_KEY = "rover_parameters";
@@ -117,9 +119,9 @@ struct ControllerStateMessage {
     double _xSetpoint,
     double _ySetpoint,
     double _thetaSetpoint,
-    double _xAtSetpoint,
-    double _yAtSetpoint,
-    double _thetaAtSetpoint
+    bool _xAtSetpoint,
+    bool _yAtSetpoint,
+    bool _thetaAtSetpoint
   ) {
     timestamp = _timestamp;
 
@@ -466,22 +468,24 @@ void publishControlState() {
 
   double xPositionError = xController->GetPositionError();
   double xVelocityError = xController->GetVelocityError();
-  
+
   double yPositionError = yController->GetPositionError();
   double yVelocityError = yController->GetVelocityError();
   
+  std::cout << "error: " << xPositionError << std::endl;
+  std::cout << "error: " << yPositionError << std::endl;
+
   frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
   frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
   
-  double xSetpoint = xController->GetSetpoint();
-  double ySetpoint = yController->GetSetpoint();
+  double xSetpoint = xController->GetP();
+  double ySetpoint = yController->GetP();
   
   frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
 
-  double xAtSetpoint = xController->AtSetpoint();
-  double yAtSetpoint = yController->AtSetpoint();
-  double thetaAtSetpoint = thetaController->AtSetpoint();
-
+  bool xAtSetpoint = xController->AtSetpoint();
+  bool yAtSetpoint = yController->AtSetpoint();
+  bool thetaAtSetpoint = thetaController->AtSetpoint();
 
   ControllerStateMessage message = {
     timestamp,
@@ -537,7 +541,7 @@ int main(int argc, char **argv) {
 
   redisConnectionOpts.host = "127.0.0.1";
   redisConnectionOpts.port = 6379;
-  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1); 
+  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(5); 
   
   redis = new Redis(redisConnectionOpts);
 
@@ -593,7 +597,11 @@ int main(int argc, char **argv) {
 
   } else {
     activeWaypoints.push_back(robotPose);
-    activeWaypoints.push_back(frc::Pose2d{0.5_m, 0.0_m, robotPose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.Rotation()});
+    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.Rotation()}); 
   }
 
   dumpWaypoints();
@@ -624,17 +632,17 @@ int main(int argc, char **argv) {
 
   units::time::second_t totalTime = trajectory.TotalTime();
   
-  json sampledTrajectoryJSON = json::array(); 
+  json profiledTrajectoryJSON = json::array(); 
   for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
     frc::Trajectory::State state = trajectory.Sample(units::second_t (i * controllerUpdateRate * 0.001));
 
     json stateTrajectoryJSON;
     frc::to_json(stateTrajectoryJSON, state);
 
-    sampledTrajectoryJSON.push_back(stateTrajectoryJSON);
+    profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
   }
 
-  redis->publish(TRAJECTORY_SAMPLE_KEY, sampledTrajectoryJSON.dump()); 
+  redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
   
   LoopTimer timer;
 	timer.initializeTimer();
@@ -646,6 +654,8 @@ int main(int argc, char **argv) {
   printf("total time: %f \n", (double)totalTime.value());
 
   frc::Pose2d startingRobotPose = getCurrentPose();
+
+  controller->SetTolerance(frc::Pose2d{0.01_m, 0.01_m, frc::Rotation2d{1_deg}});
 
   while(keepRunning) {
     try {
@@ -675,9 +685,12 @@ int main(int argc, char **argv) {
     
     //printf("elapsed time: %ld \n", elapsedTime);
     //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
-      frc::Trajectory::State state = trajectory.Sample(units::second_t (dt * 1000000));
-     
-     // continue;
+      frc::Trajectory::State state = trajectory.Sample(units::second_t (elapsedTime * .000001));
+      json stateTrajectoryJSON;
+
+      frc::to_json(stateTrajectoryJSON, state);
+      redis->publish(TRAJECTORY_SAMPLE_KEY, stateTrajectoryJSON.dump()); 
+      
       frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose, state, startingRobotPose.Rotation());
       
       frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
