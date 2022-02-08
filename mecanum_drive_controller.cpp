@@ -203,6 +203,10 @@ struct ParametersMessage {
   double linearTolerance = 0.01;
   double angularTolerance = 2.0 * M_PI / 180;
 
+  double poseToleranceX = 0.01;
+  double poseToleranceY = 0.01;
+  double poseToleranceTheta = 0.02;
+
   double xControllerP = 1.5;
   double xControllerI = 0.0;
   double xControllerD = 0.0;
@@ -234,6 +238,10 @@ struct ParametersMessage {
 
     linearTolerance,
     angularTolerance,
+
+    poseToleranceX,
+    poseToleranceY,
+    poseToleranceTheta,
 
     xControllerP,
     xControllerI,
@@ -330,6 +338,10 @@ double maxYPosition;
 units::meter_t linearTolerance;
 units::radian_t angularTolerance;
 
+units::meter_t poseToleranceX;
+units::meter_t poseToleranceY;
+units::radian_t poseToleranceTheta;
+
 double xControllerP;
 double xControllerI;
 double xControllerD;
@@ -367,6 +379,10 @@ void updateParameters(ParametersMessage parametersMessage) {
 
   linearTolerance = units::meter_t (parametersMessage.linearTolerance);
   angularTolerance = units::radian_t (parametersMessage.angularTolerance);
+
+  poseToleranceX = units::meter_t (parametersMessage.poseToleranceX);
+  poseToleranceY = units::meter_t (parametersMessage.poseToleranceY);
+  poseToleranceTheta = units::radian_t (parametersMessage.poseToleranceTheta);
   
   maxXPosition = parametersMessage.maxXPosition;
   maxYPosition = parametersMessage.maxYPosition;
@@ -429,6 +445,8 @@ void updateParameters(ParametersMessage parametersMessage) {
       *yController,
       *thetaController
     );
+
+    controller->SetTolerance(frc::Pose2d{poseToleranceX, poseToleranceY, frc::Rotation2d{poseToleranceTheta}});
   }
 }
 
