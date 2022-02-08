@@ -13,8 +13,6 @@
 
 #include <sw/redis++/redis++.h>
 
-#include <Eigen/Dense>
-
 #include "utils/LoopTimer.h"
 
 #include <frc/MathUtil.h>
@@ -52,7 +50,7 @@
 
 #include <inttypes.h>
 
-#define FLT float
+#include <survive.h>
 
 using namespace sw::redis;
 using namespace std::chrono;
@@ -89,7 +87,7 @@ const string TRAJECTORY_KEY = "rover_trajectory";
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 struct PoseMessage {
-  FLT timestamp;
+  FLT timestamp = 0.0;
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
@@ -278,7 +276,17 @@ void stopWheels() {
   redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
 }
 
-frc::Pose2d getCurrentPose() {
+struct poseInfo {
+  poseInfo(PoseMessage _message, frc::Pose2d _pose) {
+    message = _message;
+    pose    = _pose;
+  }
+
+  PoseMessage message;
+  frc::Pose2d pose;
+};
+
+poseInfo getCurrentPose() {
   auto pose = redis->get(POSE_DATA_KEY);
     
   string s = *pose;
@@ -286,7 +294,7 @@ frc::Pose2d getCurrentPose() {
 
   msgpack::object deserialized = oh.get();
 
-  PoseMessage poseMessage { 0, { 0, 0, 0 }, { 0, 0, 0, 0 } };
+  PoseMessage poseMessage;
   deserialized.convert(poseMessage);
 
   frc::Rotation2d heading = frc::Rotation2d(units::radian_t (
@@ -296,7 +304,9 @@ frc::Pose2d getCurrentPose() {
 
   frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
 
-  return robotPose;
+  poseInfo p = { poseMessage, robotPose };
+
+  return p;
 }
 
 int64_t startupTimestamp;
@@ -586,7 +596,7 @@ int main(int argc, char **argv) {
     updateParameters(parametersMessage);
   }
 
-  frc::Pose2d robotPose = getCurrentPose();
+  poseInfo robotPose = getCurrentPose();
 
   auto waypoints = redis->get(TRAJECTORY_KEY);
 
@@ -596,12 +606,12 @@ int main(int argc, char **argv) {
     updateActiveWaypointsFromJSON(waypointsString);
 
   } else {
-    activeWaypoints.push_back(robotPose);
-    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.Rotation()});
-    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.Rotation()}); 
-    activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.Rotation()}); 
-    activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.Rotation()}); 
-    activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.Rotation()}); 
+    activeWaypoints.push_back(robotPose.pose);
+    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.pose.Rotation()});
+    activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.pose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.pose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.pose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.pose.Rotation()}); 
   }
 
   dumpWaypoints();
@@ -653,7 +663,7 @@ int main(int argc, char **argv) {
 
   printf("total time: %f \n", (double)totalTime.value());
 
-  frc::Pose2d startingRobotPose = getCurrentPose();
+  poseInfo startingRobotPose = getCurrentPose();
 
   controller->SetTolerance(frc::Pose2d{0.01_m, 0.01_m, frc::Rotation2d{1_deg}});
 
@@ -671,9 +681,9 @@ int main(int argc, char **argv) {
 
     int64_t elapsedTime = currentTime - startTime;
 
-    frc::Pose2d robotPose = getCurrentPose();
+    poseInfo robotPose = getCurrentPose();
 
-    if (abs(robotPose.X().value()) > maxXPosition || abs(robotPose.Y().value()) > maxYPosition) {
+    if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
       std::cout << "Out of bounds!" << std::endl;
 
       stopWheels();
@@ -683,61 +693,54 @@ int main(int argc, char **argv) {
 
     publishControlState();
     
-    //printf("elapsed time: %ld \n", elapsedTime);
-    //if(totalTime > (units::second_t (elapsedTime / 1000000))) {
-      frc::Trajectory::State state = trajectory.Sample(units::second_t (elapsedTime * .000001));
-      json stateTrajectoryJSON;
+    frc::Trajectory::State state = trajectory.Sample(units::second_t (elapsedTime * .000001));
+    json stateTrajectoryJSON;
 
-      frc::to_json(stateTrajectoryJSON, state);
-      redis->publish(TRAJECTORY_SAMPLE_KEY, stateTrajectoryJSON.dump()); 
+    frc::to_json(stateTrajectoryJSON, state);
+
+    json trajectoryInfoJSON;
+
+    trajectoryInfoJSON["timestamp"] = robotPose.message.timestamp;
+    trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+    redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    
+    frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    
+    frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+    
+    wheelVelocityMessage message = { 
+      uint32_t(elapsedTime), 
       
-      frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose, state, startingRobotPose.Rotation());
-      
-      frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
-      
-      wheelVelocityMessage message = { 
-        uint32_t(elapsedTime), 
-        
-        {
-          velocityToRPM(targetWheelSpeeds.frontRight),
-          velocityToRPM(targetWheelSpeeds.frontLeft),
-          velocityToRPM(targetWheelSpeeds.rearLeft),
-          velocityToRPM(targetWheelSpeeds.rearRight)
-        }
-      };
+      {
+        velocityToRPM(targetWheelSpeeds.frontRight),
+        velocityToRPM(targetWheelSpeeds.frontLeft),
+        velocityToRPM(targetWheelSpeeds.rearLeft),
+        velocityToRPM(targetWheelSpeeds.rearRight)
+      }
+    };
 
-      //printf("%f %f %f %f", (double)targetWheelSpeeds.frontRight, (double)targetWheelSpeeds.frontLeft, (double)targetWheelSpeeds.rearLeft, (double)targetWheelSpeeds.rearRight);
+    std::stringstream packed;
+    msgpack::pack(packed, message);
 
-      std::stringstream packed;
-      msgpack::pack(packed, message);
-  
-      packed.seekg(0);
+    packed.seekg(0);
 
-      redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+    redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
 
-        packed.seekg(0);
+    packed.seekg(0);
 
-        std::string str(packed.str());
+    std::string str(packed.str());
 
-        msgpack::object_handle oh =
-        msgpack::unpack(str.data(), str.size());
+    msgpack::object_handle oh =
+    msgpack::unpack(str.data(), str.size());
 
-        msgpack::object deserialized = oh.get();
-        std::cout << deserialized << std::endl;
-
-    //} else {
-    //  stopWheels();
-   // }
-
+    msgpack::object deserialized = oh.get();
+    std::cout << deserialized << std::endl;
   }
-
 
   stopWheels();
 
   double end_time = timer.elapsedTime();
-
-  //auto& endPose = trajectory.States().back().pose;
-
 
 	return 0;
 }
