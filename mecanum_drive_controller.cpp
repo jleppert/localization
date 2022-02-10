@@ -83,8 +83,11 @@ const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 
 const string PARAMETERS_KEY = "rover_parameters";
 const string TRAJECTORY_KEY = "rover_trajectory";
+const string COMMAND_KEY = "rover_command";
 
 const string CONTROLLER_STATE_KEY = "rover_control_state";
+
+const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
 
 struct PoseMessage {
   FLT timestamp = 0.0;
@@ -119,7 +122,8 @@ struct ControllerStateMessage {
     double _thetaSetpoint,
     bool _xAtSetpoint,
     bool _yAtSetpoint,
-    bool _thetaAtSetpoint
+    bool _thetaAtSetpoint,
+    bool _atPoseReference
   ) {
     timestamp = _timestamp;
 
@@ -139,6 +143,8 @@ struct ControllerStateMessage {
     xAtSetpoint = _xAtSetpoint;
     yAtSetpoint = _yAtSetpoint;
     thetaAtSetpoint = _thetaAtSetpoint;
+
+    atPoseReference = _atPoseReference;
   }
 
   int64_t timestamp = 0;
@@ -160,6 +166,8 @@ struct ControllerStateMessage {
   bool yAtSetpoint = false;
   bool thetaAtSetpoint = false;
 
+  bool atPoseReference = false;
+
   MSGPACK_DEFINE_MAP(
     timestamp, 
 
@@ -178,7 +186,9 @@ struct ControllerStateMessage {
 
     xAtSetpoint,
     yAtSetpoint,
-    thetaAtSetpoint
+    thetaAtSetpoint,
+
+    atPoseReference
   )
 };
 
@@ -342,6 +352,7 @@ units::meter_t poseToleranceX;
 units::meter_t poseToleranceY;
 units::radian_t poseToleranceTheta;
 
+
 double xControllerP;
 double xControllerI;
 double xControllerD;
@@ -364,6 +375,8 @@ frc::ProfiledPIDController<units::radian>* thetaController;
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 
 std::vector<frc::Pose2d> activeWaypoints;
+
+frc::Trajectory activeTrajectory;
 
 void updateParameters(ParametersMessage parametersMessage) {
   lastParametersMessage = parametersMessage;
@@ -463,6 +476,27 @@ void updateParametersFromString(string parametersString) {
   updateParameters(parametersMessage);
 }
 
+void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectoryMaxVelocity, units::meters_per_second_squared_t trajectoryMaxAcceleration) {
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(
+      activeWaypoints, {trajectoryMaxVelocity, trajectoryMaxAcceleration});
+
+  units::time::second_t totalTime = activeTrajectory.TotalTime();
+  
+  json profiledTrajectoryJSON = json::array(); 
+  for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (i * controllerUpdateRate * 0.001));
+
+    json stateTrajectoryJSON;
+    frc::to_json(stateTrajectoryJSON, state);
+
+    profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
+  }
+
+  printf("total time: %f \n", (double)totalTime.value());
+
+  redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
+}
+
 void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
   
   activeWaypoints.clear();
@@ -479,6 +513,19 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
       activeWaypoints.push_back(p);
     }
   }
+
+  units::meters_per_second_t trajectoryMaxVelocity = maxVelocity;
+  units::meters_per_second_squared_t trajectoryMaxAcceleration = maxAcceleration;
+
+  if(waypointJSON.find("maxVelocity") != waypointJSON.end()) {
+    trajectoryMaxVelocity = units::meters_per_second_t (waypointJSON["maxVelocity"].get<double>());
+  }
+
+  if(waypointJSON.find("maxAcceleration") != waypointJSON.end()) {
+    trajectoryMaxAcceleration = units::meters_per_second_squared_t (waypointJSON["maxAcceleration"].get<double>());
+  }
+
+  generateTrajectoryFromActiveWaypoints(trajectoryMaxVelocity, trajectoryMaxAcceleration);
 }
 
 void dumpWaypoints() {
@@ -506,14 +553,16 @@ void publishControlState() {
   frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
   frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
   
-  double xSetpoint = xController->GetP();
-  double ySetpoint = yController->GetP();
+  double xSetpoint = xController->GetSetpoint();
+  double ySetpoint = yController->GetSetpoint();
   
   frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
 
   bool xAtSetpoint = xController->AtSetpoint();
   bool yAtSetpoint = yController->AtSetpoint();
   bool thetaAtSetpoint = thetaController->AtSetpoint();
+
+  bool atPoseReference = controller->AtReference();
 
   ControllerStateMessage message = {
     timestamp,
@@ -533,7 +582,9 @@ void publishControlState() {
 
     xAtSetpoint,
     yAtSetpoint,
-    thetaAtSetpoint
+    thetaAtSetpoint,
+
+    atPoseReference
   };
 
   std::stringstream packed;
@@ -547,15 +598,29 @@ void publishControlState() {
 enum messageTypes {
   PARAMETERS_MESSAGE,
   TRAJECTORY_MESSAGE,
+  COMMAND_MESSAGE,
 
   UNKNOWN_MESSAGE
+};
+
+enum commandTypes {
+  STOP_WHEELS_COMMAND,
+
+  UNKNOWN_COMMAND
 };
 
 messageTypes getMessageType(std::string const& messageType) {
   if(messageType == PARAMETERS_KEY) return PARAMETERS_MESSAGE;
   if(messageType == TRAJECTORY_KEY) return TRAJECTORY_MESSAGE;
+  if(messageType == COMMAND_KEY) return COMMAND_MESSAGE;
 
   return UNKNOWN_MESSAGE;
+}
+
+commandTypes getCommandType(std::string const& commandType) {
+  if(commandType == STOP_WHEELS_COMMAND_KEY) return STOP_WHEELS_COMMAND;
+
+  return UNKNOWN_COMMAND;
 }
 
 int main(int argc, char **argv) {
@@ -622,14 +687,23 @@ int main(int argc, char **argv) {
     string waypointsString = *waypoints;
 
     updateActiveWaypointsFromJSON(waypointsString);
-
+    
   } else {
+    //activeWaypoints.push_back(robotPose.pose);
+    //activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.pose.Rotation()});
+    //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.5_m, robotPose.pose.Rotation()}); 
+    //activeWaypoints.push_back(frc::Pose2d{0.5_m, 0.5_m, robotPose.pose.Rotation()}); 
+    //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.3_m, robotPose.pose.Rotation()}); 
+    //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.2_m, robotPose.pose.Rotation()}); 
+
     activeWaypoints.push_back(robotPose.pose);
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.pose.Rotation()});
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.pose.Rotation()}); 
-    activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.pose.Rotation()}); 
+    activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.pose.Rotation()});  
+
+    generateTrajectoryFromActiveWaypoints(0.4_mps, 0.4_mps_sq);
   }
 
   dumpWaypoints();
@@ -649,29 +723,25 @@ int main(int argc, char **argv) {
         updateActiveWaypointsFromJSON(msg);
 
         break;
+
+      case COMMAND_MESSAGE:
+        json commandMessageJSON = json::parse(msg);
+
+        if(commandMessageJSON.find("command") != commandMessageJSON.end()) {
+          switch (getCommandType(commandMessageJSON["command"].get<std::string>())) {
+            case STOP_WHEELS_COMMAND:
+              stopWheels();
+
+            break;
+          }
+        }
     }
   });
 
   subscriber.subscribe(PARAMETERS_KEY);
   subscriber.subscribe(TRAJECTORY_KEY);
+  subscriber.subscribe(COMMAND_KEY);
 
-  auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
-      activeWaypoints, {0.4_mps, 0.4_mps_sq});
-
-  units::time::second_t totalTime = trajectory.TotalTime();
-  
-  json profiledTrajectoryJSON = json::array(); 
-  for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
-    frc::Trajectory::State state = trajectory.Sample(units::second_t (i * controllerUpdateRate * 0.001));
-
-    json stateTrajectoryJSON;
-    frc::to_json(stateTrajectoryJSON, state);
-
-    profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
-  }
-
-  redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
-  
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
@@ -679,11 +749,7 @@ int main(int argc, char **argv) {
   int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
-  printf("total time: %f \n", (double)totalTime.value());
-
   poseInfo startingRobotPose = getCurrentPose();
-
-  controller->SetTolerance(frc::Pose2d{0.01_m, 0.01_m, frc::Rotation2d{1_deg}});
 
   while(keepRunning) {
     try {
@@ -711,7 +777,7 @@ int main(int argc, char **argv) {
 
     publishControlState();
     
-    frc::Trajectory::State state = trajectory.Sample(units::second_t (elapsedTime * .000001));
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
     json stateTrajectoryJSON;
 
     frc::to_json(stateTrajectoryJSON, state);
