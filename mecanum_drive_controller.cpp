@@ -501,11 +501,19 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
   
   activeWaypoints.clear();
   
+  std::cout << "here 1" << std::endl;
+
   json waypointJSON = json::parse(waypointsJSONString);
+  
+  std::cout << "pared!" << std::endl;
 
   if(waypointJSON.find("waypoints") != waypointJSON.end()) {
-  
+    
+    std::cout << "here 2" << std::endl;
+
     for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
+      std::cout << "here 3" << std::endl;
+
       frc::Pose2d p;
 
       frc::from_json(it.value(), p);
@@ -525,7 +533,9 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
     trajectoryMaxAcceleration = units::meters_per_second_squared_t (waypointJSON["maxAcceleration"].get<double>());
   }
 
-  generateTrajectoryFromActiveWaypoints(trajectoryMaxVelocity, trajectoryMaxAcceleration);
+  if(activeWaypoints.size() > 0) {
+    generateTrajectoryFromActiveWaypoints(trajectoryMaxVelocity, trajectoryMaxAcceleration);
+  }
 }
 
 void dumpWaypoints() {
@@ -718,7 +728,7 @@ int main(int argc, char **argv) {
         break;
         
       case TRAJECTORY_MESSAGE:
-        std::cout << "got trajectory!" << std::endl;
+        std::cout << "got trajectory! " << msg << std::endl;
 
         updateActiveWaypointsFromJSON(msg);
 
