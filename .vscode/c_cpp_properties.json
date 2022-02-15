@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/johnathan/devel/rover/usr/local/wpilib/include/wpimath/",
+                "/home/johnathan/devel/rover/usr/local/wpilib/include/wpiutil/",
+                "/home/johnathan/devel/rover/usr/include/c++/9",
+                "/home/johnathan/devel/rover/usr/include/aarch64-linux-gnu/c++/9",
+                "/home/johnathan/devel/rover/usr/include/c++/9/backward",
+                "/home/johnathan/devel/rover/usr/lib/gcc/aarch64-linux-gnu/9/include",
+                "/home/johnathan/devel/rover/usr/local/include",
+                "/home/johnathan/devel/rover/usr/include/aarch64-linux-gnu",
+                "/home/johnathan/devel/rover/usr/include"
+            ],
+            "defines": [],
+            "compilerPath": "/opt/gcc-arm-none-eabi-7-2017-q4-major/bin/arm-none-eabi-gcc",
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-arm"
+        }
+    ],
+    "version": 4
+}
