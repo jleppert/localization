@@ -416,7 +416,7 @@ void updateParameters(ParametersMessage parametersMessage) {
   if(xController == NULL) {
     xController = new frc2::PIDController(xControllerP, xControllerI, xControllerD);
   } else {
-    xController->SetPID(xControllerP, xControllerI, xControllerD);
+    controller->getXController().SetPID(xControllerP, xControllerI, xControllerD);
   }
 
   yControllerP = parametersMessage.yControllerP;
@@ -426,7 +426,7 @@ void updateParameters(ParametersMessage parametersMessage) {
   if(yController == NULL) {
     yController = new frc2::PIDController(yControllerP, yControllerI, yControllerD);
   } else {
-    yController->SetPID(yControllerP, yControllerI, yControllerD);
+    controller->getYController().SetPID(yControllerP, yControllerI, yControllerD);
   }
 
   thetaControllerP = parametersMessage.thetaControllerP;
@@ -440,7 +440,6 @@ void updateParameters(ParametersMessage parametersMessage) {
     thetaConstraints->maxAcceleration = maxAngularAcceleration;
   }
 
-
   if(thetaController == NULL) {
     thetaController = new frc::ProfiledPIDController<units::radian>(
       thetaControllerP,
@@ -449,18 +448,18 @@ void updateParameters(ParametersMessage parametersMessage) {
       *thetaConstraints
     );
   } else {
-    thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
+    controller->getThetaController().SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
   }
 
   if(controller == NULL) {
     controller = new frc::HolonomicDriveController(
-      *xController,
-      *yController,
-      *thetaController
+      (frc2::PIDController) *xController,
+      (frc2::PIDController) *yController,
+      (frc::ProfiledPIDController<units::radian>) *thetaController
     );
-
-    controller->SetTolerance(frc::Pose2d{poseToleranceX, poseToleranceY, frc::Rotation2d{poseToleranceTheta}});
   }
+
+  controller->SetTolerance(frc::Pose2d{poseToleranceX, poseToleranceY, frc::Rotation2d{poseToleranceTheta}});
 }
 
 void updateParametersFromString(string parametersString) {
@@ -551,26 +550,26 @@ void publishControlState() {
   int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t timestamp = currentTimestamp - startupTimestamp;
 
-  double xPositionError = xController->GetPositionError();
-  double xVelocityError = xController->GetVelocityError();
+  double xPositionError = controller->getXController().GetPositionError();
+  double xVelocityError = controller->getXController().GetVelocityError();
 
-  double yPositionError = yController->GetPositionError();
-  double yVelocityError = yController->GetVelocityError();
+  double yPositionError = controller->getYController().GetPositionError();
+  double yVelocityError = controller->getYController().GetVelocityError();
   
   std::cout << "error: " << xPositionError << std::endl;
   std::cout << "error: " << yPositionError << std::endl;
 
-  frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
-  frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
+  frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = controller->getThetaController().GetPositionError();
+  frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = controller->getThetaController().GetVelocityError();
   
-  double xSetpoint = xController->GetSetpoint();
-  double ySetpoint = yController->GetSetpoint();
+  double xSetpoint = controller->getXController().GetSetpoint();
+  double ySetpoint = controller->getYController().GetSetpoint();
   
-  frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
+  frc::ProfiledPIDController<units::radian>::State thetaState = controller->getThetaController().GetSetpoint();
 
-  bool xAtSetpoint = xController->AtSetpoint();
-  bool yAtSetpoint = yController->AtSetpoint();
-  bool thetaAtSetpoint = thetaController->AtSetpoint();
+  bool xAtSetpoint = controller->getXController().AtSetpoint();
+  bool yAtSetpoint = controller->getYController().AtSetpoint();
+  bool thetaAtSetpoint = controller->getThetaController().AtSetpoint();
 
   bool atPoseReference = controller->AtReference();
 
