@@ -123,7 +123,10 @@ struct ControllerStateMessage {
     bool _xAtSetpoint,
     bool _yAtSetpoint,
     bool _thetaAtSetpoint,
-    bool _atPoseReference
+    bool _atPoseReference,
+    double _poseErrorX,
+    double _poseErrorY,
+    double _rotationError
   ) {
     timestamp = _timestamp;
 
@@ -145,6 +148,11 @@ struct ControllerStateMessage {
     thetaAtSetpoint = _thetaAtSetpoint;
 
     atPoseReference = _atPoseReference;
+
+    poseErrorX = _poseErrorX;
+    poseErrorY = _poseErrorY;
+
+    rotationError = _rotationError;
   }
 
   int64_t timestamp = 0;
@@ -168,6 +176,11 @@ struct ControllerStateMessage {
 
   bool atPoseReference = false;
 
+  double poseErrorX = 0;
+  double poseErrorY = 0;
+
+  double rotationError = 0;
+
   MSGPACK_DEFINE_MAP(
     timestamp, 
 
@@ -188,7 +201,11 @@ struct ControllerStateMessage {
     yAtSetpoint,
     thetaAtSetpoint,
 
-    atPoseReference
+    atPoseReference,
+
+    poseErrorX,
+    poseErrorY,
+    rotationError
   )
 };
 
@@ -573,6 +590,9 @@ void publishControlState() {
 
   bool atPoseReference = controller->AtReference();
 
+  frc::Pose2d poseError = controller->getPoseError();
+  frc::Rotation2d rotationError = controller->getRotationError();
+
   ControllerStateMessage message = {
     timestamp,
 
@@ -593,7 +613,12 @@ void publishControlState() {
     yAtSetpoint,
     thetaAtSetpoint,
 
-    atPoseReference
+    atPoseReference,
+
+    double (poseError.X()),
+    double (poseError.Y()),
+
+    double (rotationError.Radians())
   };
 
   std::stringstream packed;
