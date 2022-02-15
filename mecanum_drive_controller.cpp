@@ -88,6 +88,8 @@ const string COMMAND_KEY = "rover_command";
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
+const string RUN_TRAJECTORY_COMMAND_KEY = "STOP_WHEELS";
+
 
 struct PoseMessage {
   FLT timestamp = 0.0;
@@ -369,7 +371,6 @@ units::meter_t poseToleranceX;
 units::meter_t poseToleranceY;
 units::radian_t poseToleranceTheta;
 
-
 double xControllerP;
 double xControllerI;
 double xControllerD;
@@ -394,6 +395,11 @@ frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 std::vector<frc::Pose2d> activeWaypoints;
 
 frc::Trajectory activeTrajectory;
+
+int64_t lastTrajectoryTime  = 0;
+int64_t trajectoryStartTime = 0;
+
+sw::redis::Subscriber* subscriber;
 
 void updateParameters(ParametersMessage parametersMessage) {
   lastParametersMessage = parametersMessage;
@@ -508,7 +514,7 @@ void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectory
     profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
   }
 
-  printf("total time: %f \n", (double)totalTime.value());
+  printf("trajectory total time: %f \n", (double)totalTime.value());
 
   redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
 }
@@ -526,6 +532,8 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
   if(waypointJSON.find("waypoints") != waypointJSON.end()) {
     
     std::cout << "here 2" << std::endl;
+
+    activeWaypoints.push_back(getCurrentPose().pose);
 
     for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
       std::cout << "here 3" << std::endl;
@@ -639,6 +647,7 @@ enum messageTypes {
 
 enum commandTypes {
   STOP_WHEELS_COMMAND,
+  RUN_TRAJECTORY_COMMAND,
 
   UNKNOWN_COMMAND
 };
@@ -653,8 +662,101 @@ messageTypes getMessageType(std::string const& messageType) {
 
 commandTypes getCommandType(std::string const& commandType) {
   if(commandType == STOP_WHEELS_COMMAND_KEY) return STOP_WHEELS_COMMAND;
+  if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
 
   return UNKNOWN_COMMAND;
+}
+
+void runActiveTrajectory() {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  lastTrajectoryTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  trajectoryStartTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+  bool trajectoryComplete = false;
+
+  poseInfo startingRobotPose = getCurrentPose();
+
+  while(keepRunning && !trajectoryComplete) {
+    try {
+      subscriber->consume();
+    } catch (const Error &err) {}
+
+    timer.waitForNextLoop();
+
+    int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    int64_t dt = currentTime - lastTrajectoryTime;
+
+    lastTrajectoryTime = currentTime;
+    int64_t elapsedTime = currentTime - trajectoryStartTime;
+
+    poseInfo robotPose = getCurrentPose();
+
+    if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
+      std::cout << "Out of bounds!" << std::endl;
+
+      stopWheels();
+
+      continue;
+    }
+
+    if(units::second_t(elapsedTime * 0.000001) > activeTrajectory.TotalTime()) {
+      trajectoryComplete = true;
+
+      std::cout << "Trajectory complete!" << std::endl;
+
+      continue; 
+    }
+
+    publishControlState();
+    
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
+    json stateTrajectoryJSON;
+
+    frc::to_json(stateTrajectoryJSON, state);
+
+    json trajectoryInfoJSON;
+
+    trajectoryInfoJSON["timestamp"] = robotPose.message.timestamp;
+    trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+    redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    
+    frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    
+    frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+    
+    wheelVelocityMessage message = { 
+      uint32_t(elapsedTime), 
+      
+      {
+        velocityToRPM(targetWheelSpeeds.frontRight),
+        velocityToRPM(targetWheelSpeeds.frontLeft),
+        velocityToRPM(targetWheelSpeeds.rearLeft),
+        velocityToRPM(targetWheelSpeeds.rearRight)
+      }
+    };
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+
+    redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+
+    packed.seekg(0);
+
+    std::string str(packed.str());
+
+    msgpack::object_handle oh =
+    msgpack::unpack(str.data(), str.size());
+
+    msgpack::object deserialized = oh.get();
+    std::cout << deserialized << std::endl;
+  }
+
 }
 
 int main(int argc, char **argv) {
@@ -742,9 +844,10 @@ int main(int argc, char **argv) {
 
   dumpWaypoints();
   
-  auto subscriber = redis->subscriber();
+  sw::redis::Subscriber sub = redis->subscriber();
+  subscriber = &sub;
 
-  subscriber.on_message([](std::string channel, std::string msg) {
+  subscriber->on_message([](std::string channel, std::string msg) {
     switch (getMessageType(channel)) {
       case PARAMETERS_MESSAGE:
         updateParametersFromString(msg);
@@ -766,94 +869,28 @@ int main(int argc, char **argv) {
             case STOP_WHEELS_COMMAND:
               stopWheels();
 
+            case RUN_TRAJECTORY_COMMAND:
+              stopWheels();
+
+              runActiveTrajectory();
             break;
           }
         }
     }
   });
 
-  subscriber.subscribe(PARAMETERS_KEY);
-  subscriber.subscribe(TRAJECTORY_KEY);
-  subscriber.subscribe(COMMAND_KEY);
+  subscriber->subscribe(PARAMETERS_KEY);
+  subscriber->subscribe(TRAJECTORY_KEY);
+  subscriber->subscribe(COMMAND_KEY);
 
   LoopTimer timer;
 	timer.initializeTimer();
-	timer.setLoopFrequency(controllerUpdateRate);
-
-  int64_t lastTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-
-  poseInfo startingRobotPose = getCurrentPose();
+	timer.setLoopFrequency(10);
 
   while(keepRunning) {
     try {
-      subscriber.consume();
+      subscriber->consume();
     } catch (const Error &err) {}
-
-    timer.waitForNextLoop();
-
-    int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-    int64_t dt = currentTime - lastTime;
-
-    lastTime = currentTime;
-
-    int64_t elapsedTime = currentTime - startTime;
-
-    poseInfo robotPose = getCurrentPose();
-
-    if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
-      std::cout << "Out of bounds!" << std::endl;
-
-      stopWheels();
-
-      continue;
-    }
-
-    publishControlState();
-    
-    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
-    json stateTrajectoryJSON;
-
-    frc::to_json(stateTrajectoryJSON, state);
-
-    json trajectoryInfoJSON;
-
-    trajectoryInfoJSON["timestamp"] = robotPose.message.timestamp;
-    trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
-
-    redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
-    
-    frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
-    
-    frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
-    
-    wheelVelocityMessage message = { 
-      uint32_t(elapsedTime), 
-      
-      {
-        velocityToRPM(targetWheelSpeeds.frontRight),
-        velocityToRPM(targetWheelSpeeds.frontLeft),
-        velocityToRPM(targetWheelSpeeds.rearLeft),
-        velocityToRPM(targetWheelSpeeds.rearRight)
-      }
-    };
-
-    std::stringstream packed;
-    msgpack::pack(packed, message);
-
-    packed.seekg(0);
-
-    redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
-
-    packed.seekg(0);
-
-    std::string str(packed.str());
-
-    msgpack::object_handle oh =
-    msgpack::unpack(str.data(), str.size());
-
-    msgpack::object deserialized = oh.get();
-    std::cout << deserialized << std::endl;
   }
 
   stopWheels();
