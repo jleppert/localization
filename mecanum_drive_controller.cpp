@@ -88,7 +88,7 @@ const string COMMAND_KEY = "rover_command";
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
-const string RUN_TRAJECTORY_COMMAND_KEY = "STOP_WHEELS";
+const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
 
 
 struct PoseMessage {
@@ -392,7 +392,7 @@ frc::ProfiledPIDController<units::radian>* thetaController;
 
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 
-std::vector<frc::Pose2d> activeWaypoints;
+std::vector<frc::Translation2d> activeWaypoints;
 
 frc::Trajectory activeTrajectory;
 
@@ -499,8 +499,13 @@ void updateParametersFromString(string parametersString) {
 }
 
 void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectoryMaxVelocity, units::meters_per_second_squared_t trajectoryMaxAcceleration) {
-  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(
-      activeWaypoints, {trajectoryMaxVelocity, trajectoryMaxAcceleration});
+  poseInfo currentPose = getCurrentPose();
+  
+  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(trajectoryMaxVelocity, trajectoryMaxAcceleration);
+  trajectoryConfig.SetKinematics(*driveKinematics);
+
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(currentPose.pose,
+      activeWaypoints, currentPose.pose, trajectoryConfig);
 
   units::time::second_t totalTime = activeTrajectory.TotalTime();
   
@@ -533,7 +538,7 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
     
     std::cout << "here 2" << std::endl;
 
-    activeWaypoints.push_back(getCurrentPose().pose);
+    //activeWaypoints.push_back(getCurrentPose().pose);
 
     for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
       std::cout << "here 3" << std::endl;
@@ -542,7 +547,7 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
 
       frc::from_json(it.value(), p);
 
-      activeWaypoints.push_back(p);
+      activeWaypoints.push_back(p.Translation());
     }
   }
 
@@ -563,7 +568,7 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
 }
 
 void dumpWaypoints() {
-  for(frc::Pose2d p : activeWaypoints) {
+  for(frc::Translation2d p : activeWaypoints) {
     json waypointJSON;
     frc::to_json(waypointJSON, p);
 
@@ -680,9 +685,11 @@ void runActiveTrajectory() {
   poseInfo startingRobotPose = getCurrentPose();
 
   while(keepRunning && !trajectoryComplete) {
-    try {
+    /*try {
       subscriber->consume();
-    } catch (const Error &err) {}
+    } catch (const Error &err) {}*/
+    
+    std::cout << "next loop" << std::endl;
 
     timer.waitForNextLoop();
 
@@ -693,6 +700,8 @@ void runActiveTrajectory() {
     int64_t elapsedTime = currentTime - trajectoryStartTime;
 
     poseInfo robotPose = getCurrentPose();
+    
+    std::cout << "got current pose" << std::endl;
 
     if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
       std::cout << "Out of bounds!" << std::endl;
@@ -711,9 +720,12 @@ void runActiveTrajectory() {
     }
 
     publishControlState();
-    
+    std::cout << "publish control state" << std::endl;
+
     frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
     json stateTrajectoryJSON;
+    
+    std::cout << "sample trajectory" << std::endl;
 
     frc::to_json(stateTrajectoryJSON, state);
 
@@ -724,6 +736,8 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
+    std::cout << "publish trajectory" << std::endl;
+
     frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
     frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
@@ -743,8 +757,12 @@ void runActiveTrajectory() {
     msgpack::pack(packed, message);
 
     packed.seekg(0);
+    
+    std::cout << "packed message" << std::endl;
 
     redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+    
+    std::cout << "set packed message" << std::endl;
 
     packed.seekg(0);
 
@@ -756,6 +774,8 @@ void runActiveTrajectory() {
     msgpack::object deserialized = oh.get();
     std::cout << deserialized << std::endl;
   }
+
+  stopWheels();
 
 }
 
@@ -832,14 +852,14 @@ int main(int argc, char **argv) {
     //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.3_m, robotPose.pose.Rotation()}); 
     //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.2_m, robotPose.pose.Rotation()}); 
 
-    activeWaypoints.push_back(robotPose.pose);
+    /*activeWaypoints.push_back(robotPose.pose);
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.pose.Rotation()});
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.pose.Rotation()});  
 
-    generateTrajectoryFromActiveWaypoints(0.4_mps, 0.4_mps_sq);
+    generateTrajectoryFromActiveWaypoints(0.4_mps, 0.4_mps_sq);*/
   }
 
   dumpWaypoints();
