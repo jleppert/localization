@@ -83,7 +83,11 @@ add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp
 
 add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp)
 
+add_executable(gm6020_can_redis_driver ${PROJECT_SOURCE_DIR}/gm6020_can_redis_driver.cpp)
+
 add_executable(robomaster_can_redis_driver ${PROJECT_SOURCE_DIR}/robomaster_can_redis_driver.cpp)
+
+set_target_properties(gm6020_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(mecanum_drive_controller PROPERTIES CXX_STANDARD 17)
 
@@ -100,3 +104,5 @@ target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -l
 target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
 target_link_libraries(robomaster_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Threads::Threads -lmsgpackc)
+
+target_link_libraries(gm6020_can_redis_driver -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Threads::Threads -lmsgpackc)
