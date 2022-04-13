@@ -79,6 +79,9 @@ const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
 
+const string WHEEL_VOLTAGE_COMMAND_KEY = "rover_wheel_voltage_command";
+const string WHEEL_STATUS_KEY = "rover_wheel_status";
+
 const string TRAJECTORY_PROFILE_KEY = "rover_trajectory_profile";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 
@@ -327,7 +330,25 @@ struct ParametersMessage {
   )
 };
 
-struct wheelVelocityMessage {
+struct WheelVoltageMessage {
+  uint32_t timestamp; 
+  int16_t voltage[4];  
+
+  MSGPACK_DEFINE_MAP(timestamp, voltage)
+};
+
+struct WheelStatusMessage {
+  uint32_t timestamp;
+
+  int16_t angle[4];
+  int16_t velocity[4];
+  int16_t torque[4];
+  int8_t temperature[4];
+
+  MSGPACK_DEFINE_MAP(timestamp, angle, velocity, torque, temperature)
+};
+
+struct WheelVelocityMessage {
   uint32_t timestamp; 
   int16_t velocity[4];  
 
@@ -337,6 +358,11 @@ struct wheelVelocityMessage {
 # define TAU M_PI * 2
 # define WHEEL_RADIUS 45
 
+
+double rpmToVelocity(int16_t rpm) {
+  return ((rpm / 60) * (M_PI * 2) * (WHEEL_RADIUS * 0.001));
+}
+
 int16_t velocityToRPM(units::meters_per_second_t speed) {
   return int16_t ((60 * speed) / ((WHEEL_RADIUS * 0.001 * M_PI) * 2));
 }
@@ -344,14 +370,14 @@ int16_t velocityToRPM(units::meters_per_second_t speed) {
 Redis* redis;
 
 void stopWheels() {
-  wheelVelocityMessage message { 0, { 0, 0, 0, 0 } };
+  WheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
 
   std::stringstream packed;
   msgpack::pack(packed, message);
   
   packed.seekg(0);
 
-  redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+  redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
 }
 
 struct poseInfo {
@@ -385,6 +411,20 @@ poseInfo getCurrentPose() {
   poseInfo p = { poseMessage, robotPose };
 
   return p;
+}
+
+WheelStatusMessage getCurrentWheelStatus() {
+  auto wheelStatus = redis->get(WHEEL_STATUS_KEY);
+
+  string s = *wheelStatus;
+  msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+
+  msgpack::object deserialized = oh.get();
+
+  WheelStatusMessage wheelMessage;
+  deserialized.convert(wheelMessage);
+
+  return wheelMessage;
 }
 
 int64_t startupTimestamp;
@@ -452,7 +492,7 @@ frc2::PIDController* frontRightWheelController;
 frc2::PIDController* backLeftWheelController;
 frc2::PIDController* backRightWheelController;
 
-frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforwardController;
+frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
 
 frc2::PIDController* xController;
 frc2::PIDController* yController;
@@ -544,11 +584,7 @@ void updateParameters(ParametersMessage parametersMessage) {
     backRightWheelController->SetPID(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD);
   }
 
-  if(wheelMotorFeedforwardController == NULL) {
-    wheelMotorFeedforwardController = new frc::SimpleMotorFeedforward<units::meter>(units::volt_t (wheelMotorFeedforwardkS), units::volt_t(wheelMotorFeedforwardkV) / 1_mps, units::volt_t(wheelMotorFeedforwardkA) / 1_mps_sq);
-  } else {
-    // TODO
-  }
+  wheelMotorFeedforward = new frc::SimpleMotorFeedforward<units::meter>(units::volt_t (wheelMotorFeedforwardkS), units::volt_t(wheelMotorFeedforwardkV) / 1_mps, units::volt_t(wheelMotorFeedforwardkA) / 1_mps_sq);
 
   xControllerP = parametersMessage.xControllerP;
   xControllerI = parametersMessage.xControllerI;
@@ -863,15 +899,29 @@ void runActiveTrajectory() {
     frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
     frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
-    
-    wheelVelocityMessage message = { 
+
+    units::volt_t frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontLeft);
+    units::volt_t frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontRight);
+    units::volt_t backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearLeft);
+    units::volt_t backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearRight);
+
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+
+    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
+    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
+    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
+    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+   
+    WheelVoltageMessage message = {
       uint32_t(elapsedTime), 
       
       {
-        velocityToRPM(targetWheelSpeeds.frontRight),
-        velocityToRPM(targetWheelSpeeds.frontLeft),
-        velocityToRPM(targetWheelSpeeds.rearLeft),
-        velocityToRPM(targetWheelSpeeds.rearRight)
+        int16_t (backRightOutput + backRightFeedforward.value()),
+        int16_t (frontRightOutput + frontRightFeedforward.value()),
+        int16_t (frontLeftOutput + frontLeftFeedforward.value()),
+        int16_t (backLeftOutput + backLeftFeedforward.value())
       }
     };
 
@@ -882,7 +932,7 @@ void runActiveTrajectory() {
     
     std::cout << "packed message" << std::endl;
 
-    redis->set(WHEEL_VELOCITY_COMMAND_KEY, packed.str()); 
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
     
     std::cout << "set packed message" << std::endl;
 

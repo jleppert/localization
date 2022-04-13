@@ -54,14 +54,14 @@ const string WHEEL_VOLTAGE_SET_KEY = "rover_wheel_voltage_output";
 const string WHEEL_STATUS_KEY = "rover_wheel_status";
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
-struct wheelVoltageMessage {
+struct WheelVoltageMessage {
   uint32_t timestamp; 
   int16_t voltage[4];  
 
   MSGPACK_DEFINE_MAP(timestamp, voltage)
 };
 
-struct wheelStatusMessage {
+struct WheelStatusMessage {
   uint32_t timestamp;
 
   int16_t angle[4];
@@ -105,7 +105,7 @@ void wheelVoltageTask() {
   printf("Started wheel voltage task \n");
 
   // reset wheel velocity command message
-  wheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
+  WheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
 
   std::stringstream packed;
   msgpack::pack(packed, message);
@@ -125,7 +125,7 @@ void wheelVoltageTask() {
 
       msgpack::object deserialized = oh.get();
 
-      wheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
+      WheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
       deserialized.convert(message);
 
       struct can_frame {
@@ -204,7 +204,7 @@ void wheelMonitorTask() {
   struct can_frame frame;
   
   while (true) {
-    wheelStatusMessage message;
+    WheelStatusMessage message;
 
     set <int> ids;
     while (ids.size() != 4) {
