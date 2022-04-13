@@ -51,6 +51,7 @@ void intHandler(int dummy) {
 
 const string WHEEL_VOLTAGE_COMMAND_KEY = "rover_wheel_voltage_command";
 const string WHEEL_VOLTAGE_SET_KEY = "rover_wheel_voltage_output";
+const string WHEEL_STATUS_KEY = "rover_wheel_status";
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 struct wheelVoltageMessage {
@@ -209,15 +210,26 @@ void WheelMonitorTask() {
   wheelStatusMessage message;
 
   set <int> ids;
-  while (ids.size() < 4)
+  while (ids.size() < 4){
     int id = frame.can_id - 0x205;
 
     ids.insert(id);
 
-    message.angle[id] = frame.data[0] + frame.data[1];
-    message.velocity[id] = frame.data[2] + frame.data[3];
-    message.torque[id] = frame.data[4] + frame.data[5];
+    message.angle[id] = (frame.data[0] << 8) | frame.data[1];
+    message.velocity[id] = (frame.data[2] << 8) | frame.data[3];
+    message.torque[id] = (frame.data[4] << 8) | frame.data[5];
     message.temperature[id] = frame.data[6];
+  }
+   
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    message.timestamp = uint32_t(currentMicro - startupTimestamp);
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+
+    commandMonitorRedisClient->set(WHEEL_STATUS_KEY, packed.str());
 }
 
 int main(int argc, char **argv) {
