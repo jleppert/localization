@@ -18,6 +18,7 @@
 #include <frc/MathUtil.h>
 
 #include <frc/controller/PIDController.h>
+#include <frc/controller/SimpleMotorFeedforward.h>
 #include <frc/controller/HolonomicDriveController.h>
 
 #include <frc/kinematics/MecanumDriveKinematics.h>
@@ -248,6 +249,26 @@ struct ParametersMessage {
   double thetaControllerI = 0.0;
   double thetaControllerD = 0.0;
 
+  double frontLeftWheelControllerP = 1.0;
+  double frontLeftWheelControllerI = 0.0;
+  double frontLeftWheelControllerD = 0.0;
+
+  double frontRightWheelControllerP = 1.0;
+  double frontRightWheelControllerI = 0.0;
+  double frontRightWheelControllerD = 0.0;
+
+  double backLeftWheelControllerP = 1.0;
+  double backLeftWheelControllerI = 0.0;
+  double backLeftWheelControllerD = 0.0;
+
+  double backRightWheelControllerP = 1.0;
+  double backRightWheelControllerI = 0.0;
+  double backRightWheelControllerD = 0.0;
+
+  double wheelMotorFeedforwardkS = 1.0;
+  double wheelMotorFeedforwardkV = 1.0;
+  double wheelMotorFeedforwardkA = 1.0;
+
   MSGPACK_DEFINE_MAP(
     timestamp,
 
@@ -282,7 +303,27 @@ struct ParametersMessage {
 
     thetaControllerP,
     thetaControllerI,
-    thetaControllerD
+    thetaControllerD,
+
+    frontLeftWheelControllerP,
+    frontLeftWheelControllerI,
+    frontLeftWheelControllerD,
+
+    frontRightWheelControllerP,
+    frontRightWheelControllerI,
+    frontRightWheelControllerD,
+
+    backLeftWheelControllerP,
+    backLeftWheelControllerI,
+    backLeftWheelControllerD,
+
+    backRightWheelControllerP,
+    backRightWheelControllerI,
+    backRightWheelControllerD,
+
+    wheelMotorFeedforwardkS,
+    wheelMotorFeedforwardkV,
+    wheelMotorFeedforwardkA
   )
 };
 
@@ -339,7 +380,7 @@ poseInfo getCurrentPose() {
 
   //frc::Rotation2d noHeading = frc::Rotation2d{0_deg};
 
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
+  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0]), units::meter_t(poseMessage.pos[1]), heading};
 
   poseInfo p = { poseMessage, robotPose };
 
@@ -383,8 +424,35 @@ double thetaControllerP;
 double thetaControllerI;
 double thetaControllerD;
 
+double frontLeftWheelControllerP = 1.0;
+double frontLeftWheelControllerI = 0.0;
+double frontLeftWheelControllerD = 0.0;
+
+double frontRightWheelControllerP = 1.0;
+double frontRightWheelControllerI = 0.0;
+double frontRightWheelControllerD = 0.0;
+
+double backLeftWheelControllerP = 1.0;
+double backLeftWheelControllerI = 0.0;
+double backLeftWheelControllerD = 0.0;
+
+double backRightWheelControllerP = 1.0;
+double backRightWheelControllerI = 0.0;
+double backRightWheelControllerD = 0.0;
+
+double wheelMotorFeedforwardkS = 1.0;
+double wheelMotorFeedforwardkV = 1.0;
+double wheelMotorFeedforwardkA = 1.0;
+
 frc::MecanumDriveKinematics* driveKinematics;
 frc::HolonomicDriveController* controller;
+
+frc2::PIDController* frontLeftWheelController;
+frc2::PIDController* frontRightWheelController;
+frc2::PIDController* backLeftWheelController;
+frc2::PIDController* backRightWheelController;
+
+frc::SimpleMotorFeedforward<units::meters>* wheelMotorFeedforwardController;
 
 frc2::PIDController* xController;
 frc2::PIDController* yController;
@@ -431,6 +499,56 @@ void updateParameters(ParametersMessage parametersMessage) {
   );
 
   controllerUpdateRate = parametersMessage.controllerUpdateRate;
+
+  frontLeftWheelControllerP = parametersMessage.frontLeftWheelControllerP; 
+  frontLeftWheelControllerI = parametersMessage.frontLeftWheelControllerI; 
+  frontLeftWheelControllerD = parametersMessage.frontLeftWheelControllerD; 
+
+  frontRightWheelControllerP = parametersMessage.frontRightWheelControllerP; 
+  frontRightWheelControllerI = parametersMessage.frontRightWheelControllerI; 
+  frontRightWheelControllerD = parametersMessage.frontRightWheelControllerD; 
+
+  backLeftWheelControllerP = parametersMessage.backLeftWheelControllerP; 
+  backLeftWheelControllerI = parametersMessage.backLeftWheelControllerI; 
+  backLeftWheelControllerD = parametersMessage.backLeftWheelControllerD; 
+
+  backRightWheelControllerP = parametersMessage.backRightWheelControllerP;
+  backRightWheelControllerI = parametersMessage.backRightWheelControllerI;
+  backRightWheelControllerD = parametersMessage.backRightWheelControllerD; 
+
+  wheelMotorFeedforwardkS = parametersMessage.wheelMotorFeedforwardkS;
+  wheelMotorFeedforwardkV = parametersMessage.wheelMotorFeedforwardkV;
+  wheelMotorFeedforwardkA = parametersMessage.wheelMotorFeedforwardkA;
+
+  if(frontLeftWheelController == NULL) {
+    frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD);
+  } else {
+    frontLeftWheelController->SetPID(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD);
+  }
+
+  if(frontRightWheelController == NULL) {
+    frontRightWheelController = new frc2::PIDController(frontRightWheelControllerP, frontRightWheelControllerI, frontRightWheelControllerD);
+  } else {
+    frontRightWheelController->SetPID(frontRightWheelControllerP, frontRightWheelControllerI, frontRightWheelControllerD);
+  }
+
+  if(backLeftWheelController == NULL) {
+    backLeftWheelController = new frc2::PIDController(backLeftWheelControllerP, backLeftWheelControllerI, backLeftWheelControllerD);
+  } else {
+    backLeftWheelController->SetPID(backLeftWheelControllerP, backLeftWheelControllerI, backLeftWheelControllerD);
+  }
+
+  if(backRightWheelController == NULL) {
+    backRightWheelController = new frc2::PIDController(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD);
+  } else {
+    backRightWheelController->SetPID(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD);
+  }
+
+  if(wheelMotorFeedforwardController == NULL) {
+    wheelMotorFeedforwardController = new frc::SimpleMotorFeedforward(wheelMotorFeedforwardkS, wheelMotorFeedforwardkV, wheelMotorFeedforwardkA);
+  } else {
+    // TODO
+  }
 
   xControllerP = parametersMessage.xControllerP;
   xControllerI = parametersMessage.xControllerI;
@@ -538,7 +656,9 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
     
     std::cout << "here 2" << std::endl;
 
-    //activeWaypoints.push_back(getCurrentPose().pose);
+    poseInfo currentPose = getCurrentPose();
+
+    //activeWaypoints.push_back(currentPose.pose.Translation());
 
     for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
       std::cout << "here 3" << std::endl;
@@ -549,6 +669,8 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
 
       activeWaypoints.push_back(p.Translation());
     }
+
+    //activeWaypoints.push_back(currentPose.pose.Translation());
   }
 
   units::meters_per_second_t trajectoryMaxVelocity = maxVelocity;

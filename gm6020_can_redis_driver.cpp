@@ -70,7 +70,7 @@ struct wheelStatusMessage {
   int8_t temperature[4];
 
   MSGPACK_DEFINE_MAP(timestamp, angle, velocity, torque, temperature)
-}
+};
 
 void wheelVoltageTask() {
   commandReceiverRedisClient = new Redis("tcp://127.0.0.1:6379");
@@ -173,7 +173,7 @@ void wheelVoltageTask() {
   }
 }
 
-void WheelMonitorTask() {  
+void wheelMonitorTask() {  
   odometryMonitorRedisClient = new Redis("tcp://127.0.0.1:6379");
 
   int canSocket;
@@ -205,22 +205,24 @@ void WheelMonitorTask() {
 
   int nbytes;
   struct can_frame frame;
-  nbytes = read(s, &frame, sizeof(struct can_frame));
+  
+  while (true) {
+    wheelStatusMessage message;
 
-  wheelStatusMessage message;
+    set <int> ids;
+    while (ids.size() < 4) {
+      nbytes = read(canSocket, &frame, sizeof(struct can_frame));
+      int id = frame.can_id - 0x205;
 
-  set <int> ids;
-  while (ids.size() < 4){
-    int id = frame.can_id - 0x205;
+      ids.insert(id);
 
-    ids.insert(id);
+      message.angle[id] = (frame.data[0] << 8) | frame.data[1];
+      message.velocity[id] = (frame.data[2] << 8) | frame.data[3];
+      message.torque[id] = (frame.data[4] << 8) | frame.data[5];
+      message.temperature[id] = frame.data[6];
 
-    message.angle[id] = (frame.data[0] << 8) | frame.data[1];
-    message.velocity[id] = (frame.data[2] << 8) | frame.data[3];
-    message.torque[id] = (frame.data[4] << 8) | frame.data[5];
-    message.temperature[id] = frame.data[6];
-  }
-   
+    }
+
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
     message.timestamp = uint32_t(currentMicro - startupTimestamp);
 
@@ -229,7 +231,14 @@ void WheelMonitorTask() {
 
     packed.seekg(0);
 
-    commandMonitorRedisClient->set(WHEEL_STATUS_KEY, packed.str());
+    auto oh = msgpack::unpack(packed.str().data(), packed.str().size());
+    std::cout << oh.get() << std::endl;
+
+    odometryMonitorRedisClient->set(WHEEL_STATUS_KEY, packed.str());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
 }
 
 int main(int argc, char **argv) {
@@ -242,8 +251,11 @@ int main(int argc, char **argv) {
   printf("Startup timestamp: %s \n", std::to_string(startupTimestamp).c_str());
 
   thread wheelVoltageThread(wheelVoltageTask);
+  thread wheelMonitorThread(wheelMonitorTask);
 
   wheelVoltageThread.join();
+  wheelMonitorThread.join();
+
 
 	return 0;
 }
