@@ -179,7 +179,6 @@ void wheelMonitorTask() {
   int canSocket;
 
   if ((canSocket = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
-    //perror("Socket");
     printf("Error opening socket! \n");
     exit(1);
   }
@@ -198,20 +197,18 @@ void wheelMonitorTask() {
   if (bind(canSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
    printf("Error binding! \n");
    exit(1);
-   //perror("Bind");
   }
 
   printf("Started wheel monitor task \n");
 
-  int nbytes;
   struct can_frame frame;
   
   while (true) {
     wheelStatusMessage message;
 
     set <int> ids;
-    while (ids.size() < 4) {
-      nbytes = read(canSocket, &frame, sizeof(struct can_frame));
+    while (ids.size() != 4) {
+      read(canSocket, &frame, sizeof(struct can_frame));
       int id = frame.can_id - 0x205;
 
       ids.insert(id);
@@ -220,7 +217,6 @@ void wheelMonitorTask() {
       message.velocity[id] = (frame.data[2] << 8) | frame.data[3];
       message.torque[id] = (frame.data[4] << 8) | frame.data[5];
       message.temperature[id] = frame.data[6];
-
     }
 
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -231,14 +227,15 @@ void wheelMonitorTask() {
 
     packed.seekg(0);
 
-    auto oh = msgpack::unpack(packed.str().data(), packed.str().size());
-    std::cout << oh.get() << std::endl;
-
     odometryMonitorRedisClient->set(WHEEL_STATUS_KEY, packed.str());
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
+}
 
+void printMsgpackMessage(std::stringstream packed) {
+  auto oh = msgpack::unpack(packed.str().data(), packed.str().size());
+  std::cout << oh.get() << std::endl;
 }
 
 int main(int argc, char **argv) {

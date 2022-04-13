@@ -452,7 +452,7 @@ frc2::PIDController* frontRightWheelController;
 frc2::PIDController* backLeftWheelController;
 frc2::PIDController* backRightWheelController;
 
-frc::SimpleMotorFeedforward<units::meters>* wheelMotorFeedforwardController;
+frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforwardController;
 
 frc2::PIDController* xController;
 frc2::PIDController* yController;
@@ -545,7 +545,7 @@ void updateParameters(ParametersMessage parametersMessage) {
   }
 
   if(wheelMotorFeedforwardController == NULL) {
-    wheelMotorFeedforwardController = new frc::SimpleMotorFeedforward(wheelMotorFeedforwardkS, wheelMotorFeedforwardkV, wheelMotorFeedforwardkA);
+    wheelMotorFeedforwardController = new frc::SimpleMotorFeedforward<units::meter>(units::volt_t (wheelMotorFeedforwardkS), units::volt_t(wheelMotorFeedforwardkV) / 1_mps, units::volt_t(wheelMotorFeedforwardkA) / 1_mps_sq);
   } else {
     // TODO
   }
