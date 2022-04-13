@@ -20,6 +20,8 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include <set>
+
 #include <chrono>
 #include <thread>
 
@@ -57,6 +59,17 @@ struct wheelVoltageMessage {
 
   MSGPACK_DEFINE_MAP(timestamp, voltage)
 };
+
+struct wheelStatusMessage {
+  uint32_t timestamp;
+
+  int16_t angle[4];
+  int16_t velocity[4];
+  int16_t torque[4];
+  int8_t temperature[4];
+
+  MSGPACK_DEFINE_MAP(timestamp, angle, velocity, torque, temperature)
+}
 
 void wheelVoltageTask() {
   commandReceiverRedisClient = new Redis("tcp://127.0.0.1:6379");
@@ -157,6 +170,54 @@ void wheelVoltageTask() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
+}
+
+void WheelMonitorTask() {  
+  odometryMonitorRedisClient = new Redis("tcp://127.0.0.1:6379");
+
+  int canSocket;
+
+  if ((canSocket = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
+    //perror("Socket");
+    printf("Error opening socket! \n");
+    exit(1);
+  }
+
+  struct ifreq ifr;
+
+  strcpy(ifr.ifr_name, "can0");
+  ioctl(canSocket, SIOCGIFINDEX, &ifr);
+
+  struct sockaddr_can addr;
+  memset(&addr, 0, sizeof(addr));
+
+  addr.can_family = AF_CAN;
+  addr.can_ifindex = ifr.ifr_ifindex;
+
+  if (bind(canSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+   printf("Error binding! \n");
+   exit(1);
+   //perror("Bind");
+  }
+
+  printf("Started wheel monitor task \n");
+
+  int nbytes;
+  struct can_frame frame;
+  nbytes = read(s, &frame, sizeof(struct can_frame));
+
+  wheelStatusMessage message;
+
+  set <int> ids;
+  while (ids.size() < 4)
+    int id = frame.can_id - 0x205;
+
+    ids.insert(id);
+
+    message.angle[id] = frame.data[0] + frame.data[1];
+    message.velocity[id] = frame.data[2] + frame.data[3];
+    message.torque[id] = frame.data[4] + frame.data[5];
+    message.temperature[id] = frame.data[6];
 }
 
 int main(int argc, char **argv) {
