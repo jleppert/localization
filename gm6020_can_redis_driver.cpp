@@ -30,6 +30,8 @@
 
 #include <sw/redis++/redis++.h>
 
+#define REVERSE -1
+
 using namespace std::chrono;
 
 using namespace std;
@@ -147,11 +149,11 @@ void wheelVoltageTask() {
       frame.data[2] = message.voltage[1] >> 8;
       frame.data[3] = message.voltage[1] && 0xFF;
 
-      frame.data[4] = message.voltage[2] >> 8;
-      frame.data[5] = message.voltage[2] && 0xFF;
+      frame.data[4] = (message.voltage[2] * REVERSE) >> 8;
+      frame.data[5] = (message.voltage[2] * REVERSE) && 0xFF;
 
-      frame.data[6] = message.voltage[3] >> 8;
-      frame.data[7] = message.voltage[3] && 0xFF;
+      frame.data[6] = (message.voltage[3] * REVERSE) >> 8;
+      frame.data[7] = (message.voltage[3] * REVERSE) && 0xFF;
 
       if (write(canSocket, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
         printf("Error writing frame! \n");
