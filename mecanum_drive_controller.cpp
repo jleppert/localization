@@ -132,7 +132,35 @@ struct ControllerStateMessage {
     bool _atPoseReference,
     double _poseErrorX,
     double _poseErrorY,
-    double _rotationError
+    double _rotationError,
+
+    double _wheelFrontLeftVelocityError,
+    double _wheelFrontRightVelocityError,
+    double _wheelRearLeftVelocityError,
+    double _wheelRearRightVelocityError,
+
+    double _wheelFrontLeftAccelError,
+    double _wheelFrontRightAccelError,
+    double _wheelRearLeftAccelError,
+    double _wheelRearRightAccelError,
+
+    bool _wheelFrontLeftAtSetpoint,
+    bool _wheelFrontRightAtSetpoint,
+    bool _wheelRearLeftAtSetpoint,
+    bool _wheelRearRightAtSetpoint,
+
+    double _wheelFrontLeftSetpoint,
+    double _wheelFrontRightSetpoint,
+    double _wheelRearLeftSetpoint,
+    double _wheelRearRightSetpoint,
+    double _frontLeftFeedforward,
+    double _frontRightFeedforward,
+    double _backLeftFeedforward,
+    double _backRightFeedforward,
+    double _frontLeftOutput,
+    double _frontRightOutput,
+    double _backLeftOutput,
+    double _backRightOutput
   ) {
     timestamp = _timestamp;
 
@@ -159,6 +187,36 @@ struct ControllerStateMessage {
     poseErrorY = _poseErrorY;
 
     rotationError = _rotationError;
+
+    wheelFrontLeftVelocityError = _wheelFrontLeftVelocityError;
+    wheelFrontRightVelocityError = _wheelFrontRightVelocityError;
+    wheelRearLeftVelocityError = _wheelRearLeftVelocityError;
+    wheelRearRightVelocityError = _wheelRearRightVelocityError;
+                                                              
+    wheelFrontLeftAccelError = _wheelFrontLeftAccelError;
+    wheelFrontRightAccelError = _wheelFrontRightAccelError;
+    wheelRearLeftAccelError = _wheelRearLeftAccelError;
+    wheelRearRightAccelError = _wheelRearRightAccelError;
+                                                              
+    wheelFrontLeftAtSetpoint = _wheelFrontLeftAtSetpoint;
+    wheelFrontRightAtSetpoint = _wheelFrontRightAtSetpoint;
+    wheelRearLeftAtSetpoint = _wheelRearLeftAtSetpoint;
+    wheelRearRightAtSetpoint = _wheelRearRightAtSetpoint;
+
+    wheelFrontLeftSetpoint = _wheelFrontLeftSetpoint;
+    wheelFrontRightSetpoint = _wheelFrontRightSetpoint;
+    wheelRearLeftSetpoint = _wheelRearLeftSetpoint;
+    wheelRearRightSetpoint = _wheelRearRightSetpoint;
+
+    frontLeftFeedforward = _frontLeftFeedforward;
+    frontRightFeedforward = _frontRightFeedforward;
+    backLeftFeedforward = _backLeftFeedforward;
+    backRightFeedforward = _backRightFeedforward;
+
+    frontLeftOutput = _frontLeftOutput;
+    frontRightOutput = _frontRightOutput; 
+    backLeftOutput = _backLeftOutput; 
+    backRightOutput = _backRightOutput;
   }
 
   int64_t timestamp = 0;
@@ -187,6 +245,36 @@ struct ControllerStateMessage {
 
   double rotationError = 0;
 
+  double wheelFrontLeftVelocityError = 0;
+  double wheelFrontRightVelocityError = 0;
+  double wheelRearLeftVelocityError = 0;
+  double wheelRearRightVelocityError = 0;
+
+  double wheelFrontLeftAccelError = 0;
+  double wheelFrontRightAccelError = 0;
+  double wheelRearLeftAccelError = 0;
+  double wheelRearRightAccelError = 0;
+
+  bool wheelFrontLeftAtSetpoint = false;
+  bool wheelFrontRightAtSetpoint = false;
+  bool wheelRearLeftAtSetpoint = false;
+  bool wheelRearRightAtSetpoint = false;
+
+  double wheelFrontLeftSetpoint = 0;
+  double wheelFrontRightSetpoint = 0;
+  double wheelRearLeftSetpoint = 0;
+  double wheelRearRightSetpoint = 0;
+
+  double frontLeftFeedforward = 0;
+  double frontRightFeedforward = 0;
+  double backLeftFeedforward = 0;
+  double backRightFeedforward = 0;
+
+  double frontLeftOutput = 0;
+  double frontRightOutput = 0;
+  double backLeftOutput = 0;
+  double backRightOutput = 0;
+
   MSGPACK_DEFINE_MAP(
     timestamp, 
 
@@ -211,7 +299,37 @@ struct ControllerStateMessage {
 
     poseErrorX,
     poseErrorY,
-    rotationError
+    rotationError,
+
+    wheelFrontLeftVelocityError,
+    wheelFrontRightVelocityError,
+    wheelRearLeftVelocityError,
+    wheelRearRightVelocityError,
+
+    wheelFrontLeftAccelError,
+    wheelFrontRightAccelError,
+    wheelRearLeftAccelError,
+    wheelRearRightAccelError,
+
+    wheelFrontLeftAtSetpoint,
+    wheelFrontRightAtSetpoint,
+    wheelRearLeftAtSetpoint,
+    wheelRearRightAtSetpoint,
+
+    wheelFrontLeftSetpoint,
+    wheelFrontRightSetpoint,
+    wheelRearLeftSetpoint,
+    wheelRearRightSetpoint,
+
+    frontLeftFeedforward,
+    frontRightFeedforward,
+    backLeftFeedforward,
+    backRightFeedforward,
+
+    frontLeftOutput,
+    frontRightOutput,
+    backLeftOutput,
+    backRightOutput
   )
 };
 
@@ -734,7 +852,20 @@ void dumpWaypoints() {
   }
 }
 
-void publishControlState() {
+void publishControlState(
+  frc::MecanumDriveWheelSpeeds targetWheelSpeeds,
+
+  units::volt_t frontLeftFeedforward,
+  units::volt_t frontRightFeedforward,
+  units::volt_t backLeftFeedforward,
+  units::volt_t backRightFeedforward,
+
+  double frontLeftOutput,
+  double frontRightOutput,
+  double backLeftOutput,
+  double backRightOutput
+
+  ) {
   int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
   int64_t timestamp = currentTimestamp - startupTimestamp;
 
@@ -764,6 +895,23 @@ void publishControlState() {
   frc::Pose2d poseError = controller->getPoseError();
   frc::Rotation2d rotationError = controller->getRotationError();
 
+  // wheel controllers are actually controlling velocity (not position), so the below is not a mistake
+
+  double wheelFrontLeftVelocityError = frontLeftWheelController->GetPositionError();
+  double wheelFrontRightVelocityError = frontRightWheelController->GetPositionError();
+  double wheelRearLeftVelocityError = backLeftWheelController->GetPositionError();
+  double wheelRearRightVelocityError = backRightWheelController->GetPositionError();
+
+  double wheelFrontLeftAccelError = frontLeftWheelController->GetVelocityError();
+  double wheelFrontRightAccelError = frontRightWheelController->GetVelocityError();
+  double wheelRearLeftAccelError = backLeftWheelController->GetVelocityError();
+  double wheelRearRightAccelError = backRightWheelController->GetVelocityError();
+
+  bool wheelFrontLeftAtSetpoint = frontLeftWheelController->AtSetpoint();
+  bool wheelFrontRightAtSetpoint = frontRightWheelController->AtSetpoint();
+  bool wheelRearLeftAtSetpoint =  backLeftWheelController->AtSetpoint();
+  bool wheelRearRightAtSetpoint = backRightWheelController->AtSetpoint();
+
   ControllerStateMessage message = {
     timestamp,
 
@@ -789,7 +937,37 @@ void publishControlState() {
     double (poseError.X()),
     double (poseError.Y()),
 
-    double (rotationError.Radians())
+    double (rotationError.Radians()),
+
+    wheelFrontLeftVelocityError,
+    wheelFrontRightVelocityError,
+    wheelRearLeftVelocityError,
+    wheelRearRightVelocityError,
+
+    wheelFrontLeftAccelError,
+    wheelFrontRightAccelError,
+    wheelRearLeftAccelError,
+    wheelRearRightAccelError,
+
+    wheelFrontLeftAtSetpoint,
+    wheelFrontRightAtSetpoint,
+    wheelRearLeftAtSetpoint,
+    wheelRearRightAtSetpoint,
+
+    double (targetWheelSpeeds.frontLeft.value()),
+    double (targetWheelSpeeds.frontRight.value()),
+    double (targetWheelSpeeds.rearLeft.value()),
+    double (targetWheelSpeeds.rearRight.value()),
+
+    double (frontLeftFeedforward.value()),
+    double (frontRightFeedforward.value()),
+    double (backLeftFeedforward.value()),
+    double (backRightFeedforward.value()),
+
+    frontLeftOutput,
+    frontRightOutput,
+    backLeftOutput,
+    backRightOutput
   };
 
   std::stringstream packed;
@@ -877,9 +1055,6 @@ void runActiveTrajectory() {
       continue; 
     }
 
-    publishControlState();
-    std::cout << "publish control state" << std::endl;
-
     frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
     json stateTrajectoryJSON;
     
@@ -914,6 +1089,21 @@ void runActiveTrajectory() {
     double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
     double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
    
+    publishControlState(
+      targetWheelSpeeds,
+
+      frontLeftFeedforward,
+      frontRightFeedforward,
+      backLeftFeedforward,
+      backRightFeedforward,
+
+      frontLeftOutput,
+      frontRightOutput,
+      backLeftOutput,
+      backRightOutput
+    );
+    std::cout << "publish control state" << std::endl;
+
     WheelVoltageMessage message = {
       uint32_t(elapsedTime), 
       
