@@ -216,7 +216,7 @@ void wheelMonitorTask() {
       ids.insert(id);
 
       message.angle[id] = (frame.data[0] << 8) | frame.data[1];
-      message.velocity[id] = (frame.data[2] << 8) | frame.data[3];
+      message.velocity[id] = ((frame.data[2] << 8) | frame.data[3]) * ((id == 2 || id == 3) ? REVERSE : 1);
       message.torque[id] = (frame.data[4] << 8) | frame.data[5];
       message.temperature[id] = frame.data[6];
     }
