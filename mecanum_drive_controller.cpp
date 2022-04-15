@@ -53,6 +53,7 @@
 
 #include <survive.h>
 
+using namespace std;
 using namespace sw::redis;
 using namespace std::chrono;
 
@@ -61,17 +62,6 @@ using json = wpi::json;
 using radians_per_second_squared_t =
     units::compound_unit<units::radians,
                          units::inverse<units::squared<units::second>>>;
-
-static volatile int keepRunning = 1;
-
-void intHandler(int dummy) {
-	if (keepRunning == 0) {
-		exit(-1);
-	}
-	keepRunning = 0;
-}
-
-using namespace std;
 
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
@@ -386,9 +376,12 @@ struct ParametersMessage {
   double backRightWheelControllerI = 0.0;
   double backRightWheelControllerD = 0.0;
 
-  double wheelMotorFeedforwardkS = 1.0;
-  double wheelMotorFeedforwardkV = 1.0;
-  double wheelMotorFeedforwardkA = 1.0;
+  double wheelMotorFeedforwardkS = 0.0797;
+  double wheelMotorFeedforwardkV = 0.012;
+  double wheelMotorFeedforwardkA = 0.00002;
+
+  int16_t minWheelVoltage = -30000;
+  int16_t maxWheelVoltage = 30000;
 
   MSGPACK_DEFINE_MAP(
     timestamp,
@@ -444,7 +437,10 @@ struct ParametersMessage {
 
     wheelMotorFeedforwardkS,
     wheelMotorFeedforwardkV,
-    wheelMotorFeedforwardkA
+    wheelMotorFeedforwardkA,
+
+    minWheelVoltage,
+    maxWheelVoltage
   )
 };
 
@@ -496,6 +492,17 @@ void stopWheels() {
   packed.seekg(0);
 
   redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+}
+
+static volatile int keepRunning = 1;
+
+void intHandler(int dummy) {
+	if (keepRunning == 0) {
+		stopWheels();
+
+    exit(-1);
+	}
+	keepRunning = 0;
 }
 
 struct poseInfo {
@@ -598,9 +605,12 @@ double backRightWheelControllerP = 1.0;
 double backRightWheelControllerI = 0.0;
 double backRightWheelControllerD = 0.0;
 
-double wheelMotorFeedforwardkS = 1.0;
-double wheelMotorFeedforwardkV = 1.0;
-double wheelMotorFeedforwardkA = 1.0;
+double wheelMotorFeedforwardkS = 0.0797;
+double wheelMotorFeedforwardkV = 0.012;
+double wheelMotorFeedforwardkA = 0.00002;
+
+int16_t minWheelVoltage = -30000;
+int16_t maxWheelVoltage = 30000;
 
 frc::MecanumDriveKinematics* driveKinematics;
 frc::HolonomicDriveController* controller;
@@ -677,6 +687,9 @@ void updateParameters(ParametersMessage parametersMessage) {
   wheelMotorFeedforwardkS = parametersMessage.wheelMotorFeedforwardkS;
   wheelMotorFeedforwardkV = parametersMessage.wheelMotorFeedforwardkV;
   wheelMotorFeedforwardkA = parametersMessage.wheelMotorFeedforwardkA;
+
+  minWheelVoltage = parametersMessage.minWheelVoltage;
+  maxWheelVoltage = parametersMessage.maxWheelVoltage;
 
   if(frontLeftWheelController == NULL) {
     frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD);
@@ -1084,10 +1097,10 @@ void runActiveTrajectory() {
 
     // 1 - back right, 2 - front right, 3 - front left, 4 - back left
 
-    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
-    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
-    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
-    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value())  * maxWheelVoltage;
+    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value()) * maxWheelVoltage;
+    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value())   * maxWheelVoltage;
+    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value())  * maxWheelVoltage;
    
     publishControlState(
       targetWheelSpeeds,
