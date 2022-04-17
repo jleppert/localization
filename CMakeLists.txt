@@ -33,6 +33,8 @@ include_directories (
   ${PROJECT_SOURCE_DIR}/include/yost
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/include/libsurvive
+  ${PROJECT_SOURCE_DIR}/src/external/libsurvive/libs/cnkalman/include
+  ${PROJECT_SOURCE_DIR}/src/external/libsurvive/libs/cnkalman/libs/cnmatrix/include
   ${PROJECT_SOURCE_DIR}/src/external/libsurvive/redist
   ${PROJECT_SOURCE_DIR}/src/external/robomaster_sdk_can/inc
   ${REDIS_PLUS_PLUS_HEADERS}
