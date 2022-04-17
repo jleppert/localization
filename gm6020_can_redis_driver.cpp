@@ -189,14 +189,14 @@ void printMsgpackMessage(std::string packed) {
 std::ofstream motorDataRaw;
 std::ofstream motorDataAvg;
 
-void logMotorDataToFile(int motorId, struct can_frame frame) {
+void logMotorDataToFile(int motorId, struct can_frame frame, WheelStatusMessage message) {
   motorDataRaw 
     << to_string(frame.can_id) << "," 
     << to_string(motorId) << "," 
-    << to_string((frame.data[0] << 8) | frame.data[1]) << "," 
-    << to_string(((frame.data[2] << 8) | frame.data[3]) * ((motorId == 2 || motorId == 3) ? REVERSE : 1)) << "," 
-    << to_string((frame.data[4] << 8) | frame.data[5]) << "," 
-    << to_string(frame.data[6]) << "\n";
+    << to_string(message.angle[motorId]) << "," 
+    << to_string(message.velocity[motorId]) << "," 
+    << to_string(message.torque[motorId]) << "," 
+    << to_string(message.temperature[motorId]) << "\n";
 }
 
 void logAvgMotorDataToFile(WheelStatusMessage message) {
@@ -274,11 +274,6 @@ void wheelMonitorTask() {
 
     std::vector<WheelStatusMessage> messages;
 
-    std::ofstream motorData;
-    motorData.open ("motor_data.csv");
-
-    motorData << "can_id, angle, velocity, torque, temperature\n";
-
     while(messages.size() < messageCount) {
     
       set <int> ids;  
@@ -316,7 +311,7 @@ void wheelMonitorTask() {
         
         message.temperature[id] = frame.data[6];
         
-        if(ENABLE_LOGGING) logMotorDataToFile(id, frame);
+        if(ENABLE_LOGGING) logMotorDataToFile(id, frame, message);
       }
 
       messages.push_back(message);
