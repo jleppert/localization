@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include "iostream"
 #include <sstream>
@@ -27,6 +28,9 @@
 
 #include <deque>
 #include <iomanip>
+
+#include <iostream>
+#include <fstream>
 
 #include <sw/redis++/redis++.h>
 
@@ -66,10 +70,10 @@ struct WheelVoltageMessage {
 struct WheelStatusMessage {
   uint32_t timestamp;
 
-  int16_t angle[4];
-  int16_t velocity[4];
-  int16_t torque[4];
-  int8_t temperature[4];
+  float angle[4];
+  float velocity[4];
+  float torque[4];
+  float temperature[4];
 
   MSGPACK_DEFINE_MAP(timestamp, angle, velocity, torque, temperature)
 };
@@ -149,6 +153,8 @@ void wheelVoltageTask() {
       frame.data[2] = message.voltage[1] >> 8;
       frame.data[3] = message.voltage[1] && 0xFF;
 
+      // readings from the opposite side need to be reversed
+
       frame.data[4] = (message.voltage[2] * REVERSE) >> 8;
       frame.data[5] = (message.voltage[2] * REVERSE) && 0xFF;
 
@@ -171,11 +177,68 @@ void wheelVoltageTask() {
       commandReceiverRedisClient->set(WHEEL_VOLTAGE_SET_KEY, packed.str()); 
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 }
 
+void printMsgpackMessage(std::string packed) {
+  auto oh = msgpack::unpack(packed.data(), packed.size());
+  std::cout << oh.get() << std::endl;
+}
+
+std::ofstream motorDataRaw;
+std::ofstream motorDataAvg;
+
+void logMotorDataToFile(int motorId, struct can_frame frame) {
+  motorDataRaw 
+    << to_string(frame.can_id) << "," 
+    << to_string(motorId) << "," 
+    << to_string((frame.data[0] << 8) | frame.data[1]) << "," 
+    << to_string(((frame.data[2] << 8) | frame.data[3]) * ((motorId == 2 || motorId == 3) ? REVERSE : 1)) << "," 
+    << to_string((frame.data[4] << 8) | frame.data[5]) << "," 
+    << to_string(frame.data[6]) << "\n";
+}
+
+void logAvgMotorDataToFile(WheelStatusMessage message) {
+  for(int id = 0; id < 4; id++) {
+    motorDataAvg
+      << to_string(message.timestamp) << ","
+      << to_string(id) << ","
+      << to_string(message.angle[id]) << ","
+      << to_string(message.velocity[id]) << ","
+      << to_string(message.torque[id]) << ","
+      << to_string(message.temperature[id]) << "\n";
+  }
+}
+
+int16_t be16_to_cpu_signed(const uint8_t data[2]) {
+  
+  int16_t r;
+  memcpy(&r, data, sizeof r);
+  return __builtin_bswap16(r);
+}
+
+int16_t le16_to_cpu_signed(const uint8_t data[2]) {
+  
+  int16_t r;
+  uint16_t u = (unsigned)data[0] | ((unsigned)data[1] << 8);
+  memcpy(&r, &u, sizeof r);
+  
+  return r;
+}
+
+// uncomment to enable logging motor data to CSV file for debug purposes
+#define ENABLE_LOGGING 0
+
 void wheelMonitorTask() {  
+  if(ENABLE_LOGGING) {
+    motorDataRaw.open ("motor_data_raw.csv");
+    motorDataRaw << "can_id, motor_id, angle, velocity, torque, temperature\n";
+
+    motorDataAvg.open ("motor_data_average.csv");
+    motorDataAvg << "timestamp, motor_id, angle, velocity, torque, temperature\n";
+  }
+
   odometryMonitorRedisClient = new Redis("tcp://127.0.0.1:6379");
 
   int canSocket;
@@ -203,41 +266,102 @@ void wheelMonitorTask() {
 
   printf("Started wheel monitor task \n");
 
-  struct can_frame frame;
-  
+  // 1 KHz publish rate, how many messages to buffer for averaging, 10 ms
+  float messageCount = 100;
+
   while (true) {
     WheelStatusMessage message;
 
-    set <int> ids;
-    while (ids.size() != 4) {
-      read(canSocket, &frame, sizeof(struct can_frame));
-      int id = frame.can_id - 0x205;
+    std::vector<WheelStatusMessage> messages;
 
-      ids.insert(id);
+    std::ofstream motorData;
+    motorData.open ("motor_data.csv");
 
-      message.angle[id] = (frame.data[0] << 8) | frame.data[1];
-      message.velocity[id] = ((frame.data[2] << 8) | frame.data[3]) * ((id == 2 || id == 3) ? REVERSE : 1);
-      message.torque[id] = (frame.data[4] << 8) | frame.data[5];
-      message.temperature[id] = frame.data[6];
+    motorData << "can_id, angle, velocity, torque, temperature\n";
+
+    while(messages.size() < messageCount) {
+    
+      set <int> ids;  
+      while (ids.size() != 4) {
+        struct can_frame frame;
+        int nbytes = read(canSocket, &frame, sizeof(struct can_frame));
+        
+        if(nbytes < 0) {
+          printf("Skipping empty can frame \n");
+          continue;
+        }
+
+        if(nbytes < sizeof(struct can_frame)) {
+          printf("Skipping incomplete can frame \n");
+          continue;
+        }
+
+        // ignore our own velocity frame
+        if(frame.can_id == 0x1FF) continue;
+
+        int id = frame.can_id - 0x205;
+
+        ids.insert(id);
+        
+        uint8_t angleData[2] = {frame.data[0], frame.data[1]};
+        message.angle[id] = be16_to_cpu_signed(angleData);
+
+        uint8_t velocityData[2] = {frame.data[2], frame.data[3]};
+
+        // motors on the opposite side need to be reversed
+        message.velocity[id] = be16_to_cpu_signed(velocityData) * ((id == 2 || id == 3) ? REVERSE : 1);
+        
+        uint8_t torqueData[2] = {frame.data[4], frame.data[5]};
+        message.torque[id] = be16_to_cpu_signed(torqueData);
+        
+        message.temperature[id] = frame.data[6];
+        
+        if(ENABLE_LOGGING) logMotorDataToFile(id, frame);
+      }
+
+      messages.push_back(message);
+    }
+
+    WheelStatusMessage averageMessage;
+    
+    std::array<int64_t, 4> angle = {0, 0, 0, 0};
+    std::array<int64_t, 4> velocity = {0, 0, 0, 0};
+    std::array<int64_t, 4> torque = {0, 0, 0, 0};
+    std::array<int64_t, 4> temperature = {0, 0, 0, 0};
+
+    for(int i = 0; i < messageCount; i++) {
+      for(int j = 0; j < 4; j++) {
+        angle[j] = angle[j] + messages[i].angle[j];
+        velocity[j] = velocity[j] + messages[i].velocity[j];
+        torque[j] = torque[j] + messages[i].torque[j];
+        temperature[j] = temperature[j] + messages[i].temperature[j];
+
+        averageMessage.angle[j] = angle[j] / messageCount;
+        averageMessage.velocity[j] = velocity[j] / messageCount;
+        averageMessage.torque[j] = torque[j] / messageCount;
+        averageMessage.temperature[j] = temperature[j] / messageCount;
+      }
     }
 
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
     message.timestamp = uint32_t(currentMicro - startupTimestamp);
 
+    if(ENABLE_LOGGING) logAvgMotorDataToFile(message);
+
     std::stringstream packed;
-    msgpack::pack(packed, message);
+    msgpack::pack(packed, averageMessage);
 
     packed.seekg(0);
+    
+    if(ENABLE_LOGGING) {
+      logAvgMotorDataToFile(message);
+      printMsgpackMessage(packed.str());
+    }
 
     odometryMonitorRedisClient->set(WHEEL_STATUS_KEY, packed.str());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-}
-
-void printMsgpackMessage(std::stringstream packed) {
-  auto oh = msgpack::unpack(packed.str().data(), packed.str().size());
-  std::cout << oh.get() << std::endl;
 }
 
 int main(int argc, char **argv) {
