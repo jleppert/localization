@@ -454,10 +454,10 @@ struct WheelVoltageMessage {
 struct WheelStatusMessage {
   uint32_t timestamp;
 
-  int16_t angle[4];
-  int16_t velocity[4];
-  int16_t torque[4];
-  int8_t temperature[4];
+  float angle[4];
+  float velocity[4];
+  float torque[4];
+  float temperature[4];
 
   MSGPACK_DEFINE_MAP(timestamp, angle, velocity, torque, temperature)
 };
@@ -531,7 +531,7 @@ poseInfo getCurrentPose() {
 
   //frc::Rotation2d noHeading = frc::Rotation2d{0_deg};
 
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0]), units::meter_t(poseMessage.pos[1]), heading};
+  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
 
   poseInfo p = { poseMessage, robotPose };
 
@@ -865,6 +865,11 @@ void dumpWaypoints() {
   }
 }
 
+void printMsgpackMessage(std::string packed) {
+  auto oh = msgpack::unpack(packed.data(), packed.size());
+  std::cout << oh.get() << std::endl;
+}
+
 void publishControlState(
   frc::MecanumDriveWheelSpeeds targetWheelSpeeds,
 
@@ -988,6 +993,8 @@ void publishControlState(
 
   packed.seekg(0);
 
+  //printMsgpackMessage(packed.str());
+
   redis->publish(CONTROLLER_STATE_KEY, packed.str());
 }
 
@@ -1019,6 +1026,12 @@ commandTypes getCommandType(std::string const& commandType) {
   if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
 
   return UNKNOWN_COMMAND;
+}
+
+double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFeedforward) {
+  double signedOutput = wheelControllerOutput + wheelFeedforward.value();
+
+  return ((abs(signedOutput) / maxVelocity.value()) * maxWheelVoltage) * ((signedOutput > 0) ? 1 : ((signedOutput < 0) ? -1 : 0));
 }
 
 void runActiveTrajectory() {
@@ -1097,11 +1110,17 @@ void runActiveTrajectory() {
 
     // 1 - back right, 2 - front right, 3 - front left, 4 - back left
 
-    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value())  * maxWheelVoltage;
-    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value()) * maxWheelVoltage;
-    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value())   * maxWheelVoltage;
-    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value())  * maxWheelVoltage;
-   
+    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
+    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
+    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
+    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+
+    // wheel data is
+    // 3 - back left
+    // 2 - front left
+    // 0 - back right
+    // 1 - front right
+
     publishControlState(
       targetWheelSpeeds,
 
@@ -1115,16 +1134,52 @@ void runActiveTrajectory() {
       backLeftOutput,
       backRightOutput
     );
-    std::cout << "publish control state" << std::endl;
+    
+    /*std::cout << "publish control state" << std::endl;
+    
+    std::cout << "PID Controller outputs:";
+    std::cout << backRightOutput << std::endl;
+    std::cout << frontRightOutput << std::endl;
+    std::cout << frontLeftOutput << std::endl;
+    std::cout << backLeftOutput << std::endl;
+
+    std::cout << "feedforward outputs:";
+
+    std::cout << backRightFeedforward.value() << std::endl;
+    std::cout << frontRightFeedforward.value() << std::endl;
+    std::cout << frontLeftFeedforward.value() << std::endl;
+    std::cout << backLeftFeedforward.value() << std::endl;
+*/
+
+    /*std::cout << "Target wheel speeds outputs:";
+    std::cout << targetWheelSpeeds.rearRight.value() << std::endl;
+    std::cout << targetWheelSpeeds.frontRight.value() << std::endl;
+    std::cout << targetWheelSpeeds.frontLeft.value() << std::endl;
+    std::cout << targetWheelSpeeds.rearLeft.value() << std::endl;
+
+    // 0 - back right
+    // 1 - front right
+    // 2 - front left
+    // 3 - back left 
+    /*WheelVoltageMessage message = {
+      uint32_t(elapsedTime), 
+      
+      {
+        int16_t (targetWheelSpeeds.rearRight * maxWheelVoltage),
+        int16_t (targetWheelSpeeds.frontRight * maxWheelVoltage),
+        int16_t (targetWheelSpeeds.frontLeft * maxWheelVoltage),
+        int16_t (targetWheelSpeeds.rearLeft * maxWheelVoltage)
+      }
+    };*/
 
     WheelVoltageMessage message = {
       uint32_t(elapsedTime), 
       
       {
-        int16_t (backRightOutput + backRightFeedforward.value()),
-        int16_t (frontRightOutput + frontRightFeedforward.value()),
-        int16_t (frontLeftOutput + frontLeftFeedforward.value()),
-        int16_t (backLeftOutput + backLeftFeedforward.value())
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
       }
     };
 
