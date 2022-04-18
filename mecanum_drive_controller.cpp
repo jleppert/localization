@@ -150,7 +150,12 @@ struct ControllerStateMessage {
     double _frontLeftOutput,
     double _frontRightOutput,
     double _backLeftOutput,
-    double _backRightOutput
+    double _backRightOutput,
+
+    double _frontLeftMotorOutput,
+    double _frontRightMotorOutput,
+    double _backLeftMotorOutput,
+    double _backRightMotorOutput
   ) {
     timestamp = _timestamp;
 
@@ -207,6 +212,11 @@ struct ControllerStateMessage {
     frontRightOutput = _frontRightOutput; 
     backLeftOutput = _backLeftOutput; 
     backRightOutput = _backRightOutput;
+
+    frontLeftMotorOutput = _frontLeftMotorOutput;
+    frontRightMotorOutput = _frontRightMotorOutput;
+    backLeftMotorOutput = _backLeftMotorOutput;
+    backRightMotorOutput = _backRightMotorOutput;
   }
 
   int64_t timestamp = 0;
@@ -265,6 +275,11 @@ struct ControllerStateMessage {
   double backLeftOutput = 0;
   double backRightOutput = 0;
 
+  double frontLeftMotorOutput = 0;
+  double frontRightMotorOutput = 0;
+  double backLeftMotorOutput = 0;
+  double backRightMotorOutput = 0;
+
   MSGPACK_DEFINE_MAP(
     timestamp, 
 
@@ -319,7 +334,12 @@ struct ControllerStateMessage {
     frontLeftOutput,
     frontRightOutput,
     backLeftOutput,
-    backRightOutput
+    backRightOutput,
+
+    frontLeftMotorOutput,
+    frontRightMotorOutput,
+    backLeftMotorOutput,
+    backRightMotorOutput
   )
 };
 
@@ -474,7 +494,7 @@ struct WheelVelocityMessage {
 
 
 double rpmToVelocity(int16_t rpm) {
-  return ((rpm / 60) * (M_PI * 2) * (WHEEL_RADIUS * 0.001));
+  return ((double(rpm) / 60) * (M_PI * 2) * (WHEEL_RADIUS * 0.001));
 }
 
 int16_t velocityToRPM(units::meters_per_second_t speed) {
@@ -692,25 +712,25 @@ void updateParameters(ParametersMessage parametersMessage) {
   maxWheelVoltage = parametersMessage.maxWheelVoltage;
 
   if(frontLeftWheelController == NULL) {
-    frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD);
+    frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD, units::second_t (1 / controllerUpdateRate));
   } else {
     frontLeftWheelController->SetPID(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD);
   }
 
   if(frontRightWheelController == NULL) {
-    frontRightWheelController = new frc2::PIDController(frontRightWheelControllerP, frontRightWheelControllerI, frontRightWheelControllerD);
+    frontRightWheelController = new frc2::PIDController(frontRightWheelControllerP, frontRightWheelControllerI, frontRightWheelControllerD, units::second_t (1 / controllerUpdateRate));
   } else {
     frontRightWheelController->SetPID(frontRightWheelControllerP, frontRightWheelControllerI, frontRightWheelControllerD);
   }
 
   if(backLeftWheelController == NULL) {
-    backLeftWheelController = new frc2::PIDController(backLeftWheelControllerP, backLeftWheelControllerI, backLeftWheelControllerD);
+    backLeftWheelController = new frc2::PIDController(backLeftWheelControllerP, backLeftWheelControllerI, backLeftWheelControllerD, units::second_t (1 / controllerUpdateRate));
   } else {
     backLeftWheelController->SetPID(backLeftWheelControllerP, backLeftWheelControllerI, backLeftWheelControllerD);
   }
 
   if(backRightWheelController == NULL) {
-    backRightWheelController = new frc2::PIDController(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD);
+    backRightWheelController = new frc2::PIDController(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD, units::second_t (1 / controllerUpdateRate));
   } else {
     backRightWheelController->SetPID(backRightWheelControllerP, backRightWheelControllerI, backRightWheelControllerD);
   }
@@ -881,7 +901,12 @@ void publishControlState(
   double frontLeftOutput,
   double frontRightOutput,
   double backLeftOutput,
-  double backRightOutput
+  double backRightOutput,
+
+  double frontLeftMotorOutput,
+  double frontRightMotorOutput,
+  double backLeftMotorOutput,
+  double backRightMotorOutput
 
   ) {
   int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -985,7 +1010,12 @@ void publishControlState(
     frontLeftOutput,
     frontRightOutput,
     backLeftOutput,
-    backRightOutput
+    backRightOutput,
+
+    frontLeftMotorOutput,
+    frontRightMotorOutput,
+    backLeftMotorOutput,
+    backRightMotorOutput
   };
 
   std::stringstream packed;
@@ -1029,9 +1059,7 @@ commandTypes getCommandType(std::string const& commandType) {
 }
 
 double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFeedforward) {
-  double signedOutput = wheelControllerOutput + wheelFeedforward.value();
-
-  return ((abs(signedOutput) / maxVelocity.value()) * maxWheelVoltage) * ((signedOutput > 0) ? 1 : ((signedOutput < 0) ? -1 : 0));
+  return (wheelControllerOutput + wheelFeedforward.value()) * maxWheelVoltage;
 }
 
 void runActiveTrajectory() {
@@ -1045,6 +1073,11 @@ void runActiveTrajectory() {
   bool trajectoryComplete = false;
 
   poseInfo startingRobotPose = getCurrentPose();
+
+  /*auto waypoints = std::vector{startingRobotPose.pose,
+                               frc::Pose2d{0.3_m, 0.0_m, startingRobotPose.pose.Rotation() }};
+  auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
+      waypoints, {0.4_mps, 0.4_mps_sq});*/
 
   while(keepRunning && !trajectoryComplete) {
     /*try {
@@ -1132,7 +1165,12 @@ void runActiveTrajectory() {
       frontLeftOutput,
       frontRightOutput,
       backLeftOutput,
-      backRightOutput
+      backRightOutput,
+
+      normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward),
+      normalizeMotorVoltage(frontRightOutput, frontRightFeedforward),
+      normalizeMotorVoltage(backLeftOutput, backLeftFeedforward),
+      normalizeMotorVoltage(backRightOutput, backRightFeedforward)
     );
     
     /*std::cout << "publish control state" << std::endl;
@@ -1171,9 +1209,11 @@ void runActiveTrajectory() {
         int16_t (targetWheelSpeeds.rearLeft * maxWheelVoltage)
       }
     };*/
+    
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
     WheelVoltageMessage message = {
-      uint32_t(elapsedTime), 
+      uint32_t(currentMicro - startupTimestamp),
       
       {
         int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
@@ -1333,10 +1373,6 @@ int main(int argc, char **argv) {
   subscriber->subscribe(TRAJECTORY_KEY);
   subscriber->subscribe(COMMAND_KEY);
 
-  LoopTimer timer;
-	timer.initializeTimer();
-	timer.setLoopFrequency(10);
-
   while(keepRunning) {
     try {
       subscriber->consume();
@@ -1344,8 +1380,6 @@ int main(int argc, char **argv) {
   }
 
   stopWheels();
-
-  double end_time = timer.elapsedTime();
 
 	return 0;
 }

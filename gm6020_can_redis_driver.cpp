@@ -267,7 +267,7 @@ void wheelMonitorTask() {
   printf("Started wheel monitor task \n");
 
   // 1 KHz publish rate, how many messages to buffer for averaging, 10 ms
-  float messageCount = 100;
+  float messageCount = 10;
 
   while (true) {
     WheelStatusMessage message;
@@ -339,7 +339,7 @@ void wheelMonitorTask() {
     }
 
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-    message.timestamp = uint32_t(currentMicro - startupTimestamp);
+    averageMessage.timestamp = uint32_t(currentMicro - startupTimestamp);
 
     if(ENABLE_LOGGING) logAvgMotorDataToFile(message);
 
