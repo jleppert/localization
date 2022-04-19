@@ -79,7 +79,11 @@ struct WheelStatusMessage {
 };
 
 void wheelVoltageTask() {
-  commandReceiverRedisClient = new Redis("tcp://127.0.0.1:6379");
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+
+  commandReceiverRedisClient = new Redis(redisConnectionOptions);
 
   commandReceiverRedisClient->set(STARTUP_TIMESTAMP_KEY, std::to_string(startupTimestamp));
 
@@ -239,7 +243,11 @@ void wheelMonitorTask() {
     motorDataAvg << "timestamp, motor_id, angle, velocity, torque, temperature\n";
   }
 
-  odometryMonitorRedisClient = new Redis("tcp://127.0.0.1:6379");
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+
+  odometryMonitorRedisClient = new Redis(redisConnectionOptions);
 
   int canSocket;
 

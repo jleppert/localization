@@ -1261,14 +1261,12 @@ void runActiveTrajectory() {
 }
 
 void publishControllerStateTask() {
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
 
-  ConnectionOptions redisConnectionOpts;
-
-  redisConnectionOpts.host = "127.0.0.1";
-  redisConnectionOpts.port = 6379;
-  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1);
-
-  controllerStateRedisClient = new Redis(redisConnectionOpts);
+  controllerStateRedisClient = new Redis(redisConnectionOptions);
 
   printf("Started controller state publish task\n");
 
@@ -1307,13 +1305,12 @@ int main(int argc, char **argv) {
 
   setbuf(stdout, NULL);
   
-  ConnectionOptions redisConnectionOpts;
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
 
-  redisConnectionOpts.host = "127.0.0.1";
-  redisConnectionOpts.port = 6379;
-  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1);
-
-  redis = new Redis(redisConnectionOpts);
+  redis = new Redis(redisConnectionOptions);
 
   auto timestamp = redis->get(STARTUP_TIMESTAMP_KEY);
   if(timestamp) {

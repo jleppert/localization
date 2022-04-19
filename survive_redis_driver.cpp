@@ -92,7 +92,12 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-  auto redis = Redis("tcp://127.0.0.1:6379");
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
+
+  auto redis = Redis(redisConnectionOptions);
 
 	actx = survive_simple_init_with_logger(argc, argv, log_fn);
 	
