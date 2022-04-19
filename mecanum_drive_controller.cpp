@@ -502,6 +502,7 @@ int16_t velocityToRPM(units::meters_per_second_t speed) {
 }
 
 Redis* redis;
+Redis* controllerStateRedisClient;
 
 void stopWheels() {
   WheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
@@ -918,9 +919,6 @@ void publishControlState(
   double yPositionError = controller->getYController().GetPositionError();
   double yVelocityError = controller->getYController().GetVelocityError();
   
-  std::cout << "error: " << xPositionError << std::endl;
-  std::cout << "error: " << yPositionError << std::endl;
-
   frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = controller->getThetaController().GetPositionError();
   frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = controller->getThetaController().GetVelocityError();
   
@@ -1025,7 +1023,7 @@ void publishControlState(
 
   //printMsgpackMessage(packed.str());
 
-  redis->publish(CONTROLLER_STATE_KEY, packed.str());
+  controllerStateRedisClient->publish(CONTROLLER_STATE_KEY, packed.str());
 }
 
 enum messageTypes {
@@ -1059,8 +1057,21 @@ commandTypes getCommandType(std::string const& commandType) {
 }
 
 double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFeedforward) {
+
   return (wheelControllerOutput + wheelFeedforward.value()) * maxWheelVoltage;
 }
+
+frc::MecanumDriveWheelSpeeds targetWheelSpeeds;
+
+units::volt_t frontLeftFeedforward;
+units::volt_t frontRightFeedforward;
+units::volt_t backLeftFeedforward;
+units::volt_t backRightFeedforward;
+
+double frontLeftOutput;
+double frontRightOutput;
+double backLeftOutput;
+double backRightOutput;
 
 void runActiveTrajectory() {
   LoopTimer timer;
@@ -1132,21 +1143,21 @@ void runActiveTrajectory() {
 
     frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
-    frc::MecanumDriveWheelSpeeds targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
-    units::volt_t frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontLeft);
-    units::volt_t frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontRight);
-    units::volt_t backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearLeft);
-    units::volt_t backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearRight);
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontLeft);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontRight);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearLeft);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearRight);
 
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
 
     // 1 - back right, 2 - front right, 3 - front left, 4 - back left
 
-    double frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
-    double frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
-    double backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
-    double backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
 
     // wheel data is
     // 3 - back left
@@ -1154,7 +1165,7 @@ void runActiveTrajectory() {
     // 0 - back right
     // 1 - front right
 
-    publishControlState(
+    /*publishControlState(
       targetWheelSpeeds,
 
       frontLeftFeedforward,
@@ -1171,7 +1182,7 @@ void runActiveTrajectory() {
       normalizeMotorVoltage(frontRightOutput, frontRightFeedforward),
       normalizeMotorVoltage(backLeftOutput, backLeftFeedforward),
       normalizeMotorVoltage(backRightOutput, backRightFeedforward)
-    );
+    );*/
     
     /*std::cout << "publish control state" << std::endl;
     
@@ -1249,6 +1260,46 @@ void runActiveTrajectory() {
 
 }
 
+void publishControllerStateTask() {
+
+  ConnectionOptions redisConnectionOpts;
+
+  redisConnectionOpts.host = "127.0.0.1";
+  redisConnectionOpts.port = 6379;
+  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1);
+
+  controllerStateRedisClient = new Redis(redisConnectionOpts);
+
+  printf("Started controller state publish task\n");
+
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  while(keepRunning) {
+    timer.waitForNextLoop();
+    
+    publishControlState(
+      targetWheelSpeeds,
+
+      frontLeftFeedforward,
+      frontRightFeedforward,
+      backLeftFeedforward,
+      backRightFeedforward,
+
+      frontLeftOutput,
+      frontRightOutput,
+      backLeftOutput,
+      backRightOutput,
+
+      normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward),
+      normalizeMotorVoltage(frontRightOutput, frontRightFeedforward),
+      normalizeMotorVoltage(backLeftOutput, backLeftFeedforward),
+      normalizeMotorVoltage(backRightOutput, backRightFeedforward)
+    );
+  }
+}
+
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
 	signal(SIGTERM, intHandler);
@@ -1260,15 +1311,15 @@ int main(int argc, char **argv) {
 
   redisConnectionOpts.host = "127.0.0.1";
   redisConnectionOpts.port = 6379;
-  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(5); 
-  
+  redisConnectionOpts.socket_timeout = std::chrono::milliseconds(1);
+
   redis = new Redis(redisConnectionOpts);
 
   auto timestamp = redis->get(STARTUP_TIMESTAMP_KEY);
   if(timestamp) {
     string timestampString = *timestamp;
     
-    startupTimestamp = atoll(timestampString.c_str());
+    startupTimestamp = int64_t(atoll(timestampString.c_str()));
   } else {
     std::cout << "Startup timestamp not set or invalid" << std::endl;
 
@@ -1373,11 +1424,8 @@ int main(int argc, char **argv) {
   subscriber->subscribe(TRAJECTORY_KEY);
   subscriber->subscribe(COMMAND_KEY);
 
-  while(keepRunning) {
-    try {
-      subscriber->consume();
-    } catch (const Error &err) {}
-  }
+  thread publishControllerStateThread(publishControllerStateTask);
+  publishControllerStateThread.join();
 
   stopWheels();
 
