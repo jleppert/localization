@@ -17,9 +17,12 @@
 #include <signal.h>
 #include <stdlib.h>
 
+#include <chrono>
+
 #include <sw/redis++/redis++.h>
 
 using namespace sw::redis;
+using namespace std::chrono;
 
 static volatile int keepRunning = 1;
 SurviveSimpleContext *actx; 
@@ -38,14 +41,16 @@ const string POSE_DATA_KEY = "rover_pose";
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string POSE_CONFIG_KEY = "rover_pose_config";
 const string BASE_POSE_KEY = "rover_base_pose";
+const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 static void log_fn(SurviveSimpleContext *actx, SurviveLogLevel logLevel, const char *msg) {
 	fprintf(stderr, "(%7.3f) SimpleApi: %s\n", survive_simple_run_time(actx), msg);
 }
 
 struct PoseMessage {
-  PoseMessage(FLT _timestamp, SurvivePose _pose) {
+  PoseMessage(int64_t _timestamp, FLT _trackerTimestamp, SurvivePose _pose) {
     timestamp = _timestamp;
+    trackerTimestamp = _trackerTimestamp;
 
     pos[0] = _pose.Pos[0];
     pos[1] = _pose.Pos[1];
@@ -57,17 +62,19 @@ struct PoseMessage {
     rot[3] = _pose.Rot[3];
   }
 
-  FLT timestamp;
+  int64_t timestamp;
+  FLT trackerTimestamp;
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, pos, rot)
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
 };
 
 struct VelocityMessage {
-  VelocityMessage(FLT _timestamp, SurviveVelocity _pose, SurviveAngularVelocity _theta) {
+  VelocityMessage(int64_t _timestamp, FLT _trackerTimestamp, SurviveVelocity _pose, SurviveAngularVelocity _theta) {
     timestamp = _timestamp;
+    trackerTimestamp = _trackerTimestamp;
 
     pos[0] = _pose.Pos[0];
     pos[1] = _pose.Pos[1];
@@ -78,14 +85,14 @@ struct VelocityMessage {
     theta[2] = _theta[2];
   }
 
-  FLT timestamp;
+  int64_t timestamp;
+  FLT trackerTimestamp;
 
   std::array<FLT, 3> pos   = {0.0, 0.0, 0.0};
   std::array<FLT, 3> theta = {0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, pos, theta)
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, theta)
 };
-
 
 int main(int argc, char **argv) {
 	signal(SIGABRT, intHandler);
@@ -95,13 +102,26 @@ int main(int argc, char **argv) {
   ConnectionOptions redisConnectionOptions;
   redisConnectionOptions.type = ConnectionType::UNIX;
   redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
-  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(100);
 
   auto redis = Redis(redisConnectionOptions);
 
+  int64_t startupTimestamp;
+
+  auto timestamp = redis.get(STARTUP_TIMESTAMP_KEY);
+  if(timestamp) {
+    string timestampString = *timestamp;
+    
+    startupTimestamp = int64_t(atoll(timestampString.c_str()));
+  } else {
+    std::cout << "Startup timestamp not set or invalid" << std::endl;
+
+    exit(0);
+  }
+
+
+
 	actx = survive_simple_init_with_logger(argc, argv, log_fn);
-	
-	double start_time = OGGetAbsoluteTime();
 	survive_simple_start_thread(actx);
 
 	for (const SurviveSimpleObject *it = survive_simple_get_first_object(actx); it != 0;
@@ -131,8 +151,14 @@ int main(int argc, char **argv) {
              survive_simple_serial_number(pose_event->object), timecode, pose.Pos[0], pose.Pos[1], pose.Pos[2],
              pose.Rot[0], pose.Rot[1], pose.Rot[2], pose.Rot[3]);
 
+        int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+        
+        PoseMessage message = {
+          uint32_t(currentMicro - startupTimestamp),
 
-        PoseMessage message = {timecode, pose};
+          timecode, 
+          pose
+        };
 
         printf("Timecode %7.3f \n", timecode);
         printf("BASE POS: %f %f %f \n", message.pos[0], message.pos[1], message.pos[2]);
@@ -162,8 +188,14 @@ int main(int argc, char **argv) {
         SurviveVelocity velocity = pose_event->velocity;
 
         FLT timecode = pose_event->time;
-       
-        PoseMessage message = {timecode, pose};
+        int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+        PoseMessage message = {
+          uint32_t(currentMicro - startupTimestamp),
+
+          timecode, 
+          pose
+        };
 
         SurviveAngularVelocity thetaVel = {0.0, 0.0, 0.0};
 
@@ -171,7 +203,13 @@ int main(int argc, char **argv) {
           survive_find_ang_velocity(thetaVel, timecode - lastPoseMessageTime, lastPose.Rot, pose.Rot); 
         }
 
-        VelocityMessage velMessage = {timecode, velocity, thetaVel};
+        VelocityMessage velMessage = {
+          uint32_t(currentMicro - startupTimestamp),
+
+          timecode, 
+          velocity, 
+          thetaVel
+        };
 
         std::stringstream packed;
         msgpack::pack(packed, message);
