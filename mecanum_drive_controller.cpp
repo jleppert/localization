@@ -107,6 +107,13 @@ struct ControllerStateMessage {
   ControllerStateMessage(
     int64_t _timestamp,
     
+    double _targetChassisVelocityX,
+    double _targetChassisVelocityY,
+
+    FLT _velocityX,
+    FLT _velocityY,
+
+
     double _xPositionError,
     double _xVelocityError,
     double _yPositionError,
@@ -158,6 +165,12 @@ struct ControllerStateMessage {
     double _backRightMotorOutput
   ) {
     timestamp = _timestamp;
+
+    targetChassisVelocityX = _targetChassisVelocityX;
+    targetChassisVelocityY = _targetChassisVelocityY;
+
+    velocityX = _velocityX;
+    velocityY = _velocityY;
 
     xPositionError = _xPositionError;
     xVelocityError = _xVelocityError;
@@ -221,6 +234,12 @@ struct ControllerStateMessage {
 
   int64_t timestamp = 0;
 
+  double targetChassisVelocityX = 0;
+  double targetChassisVelocityY = 0;
+
+  FLT velocityX = 0;
+  FLT velocityY = 0;
+
   double xPositionError = 0;
   double xVelocityError = 0;
 
@@ -281,7 +300,13 @@ struct ControllerStateMessage {
   double backRightMotorOutput = 0;
 
   MSGPACK_DEFINE_MAP(
-    timestamp, 
+    timestamp,
+
+    targetChassisVelocityX,
+    targetChassisVelocityY,
+
+    velocityX,
+    velocityY,
 
     xPositionError,
     xVelocityError,
@@ -527,17 +552,22 @@ void intHandler(int dummy) {
 }
 
 struct poseInfo {
-  poseInfo(PoseMessage _message, frc::Pose2d _pose) {
+  poseInfo(PoseMessage _message, VelocityMessage _messageVelocity, frc::Pose2d _pose) {
     message = _message;
+    messageVelocity = _messageVelocity;
     pose    = _pose;
+
   }
 
   PoseMessage message;
+  VelocityMessage messageVelocity;
   frc::Pose2d pose;
 };
 
 poseInfo getCurrentPose() {
   auto pose = redis->get(POSE_DATA_KEY);
+
+  auto velocity = redis->get(POSE_VELOCITY_DATA_KEY);
     
   string s = *pose;
   msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
@@ -547,6 +577,14 @@ poseInfo getCurrentPose() {
   PoseMessage poseMessage;
   deserialized.convert(poseMessage);
 
+  string sV = *velocity;
+  msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
+
+  msgpack::object deserializedV = ohV.get();
+
+  VelocityMessage velocityMessage;
+  deserializedV.convert(velocityMessage);
+
   frc::Rotation2d heading = frc::Rotation2d(units::radian_t (
     atan2(2*((poseMessage.rot[0]*poseMessage.rot[3])+(poseMessage.rot[1]*poseMessage.rot[2])),1-(2*((poseMessage.rot[2]*poseMessage.rot[2])+(poseMessage.rot[3]*poseMessage.rot[3]))))));
 
@@ -554,7 +592,7 @@ poseInfo getCurrentPose() {
 
   frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
 
-  poseInfo p = { poseMessage, robotPose };
+  poseInfo p = { poseMessage, velocityMessage, robotPose };
 
   return p;
 }
@@ -789,6 +827,11 @@ void updateParameters(ParametersMessage parametersMessage) {
   }
 
   controller->SetTolerance(frc::Pose2d{poseToleranceX, poseToleranceY, frc::Rotation2d{poseToleranceTheta}});
+
+  printf("X P: %lf, X I: %lf, X D: %lf \n", controller->getXController().GetP(), controller->getXController().GetI(), controller->getXController().GetD());
+  printf("Y P: %lf, Y I: %lf, Y D: %lf \n", controller->getYController().GetP(), controller->getYController().GetI(), controller->getYController().GetD());
+
+
 }
 
 void updateParametersFromString(string parametersString) {
@@ -892,6 +935,7 @@ void printMsgpackMessage(std::string packed) {
 }
 
 void publishControlState(
+  frc::ChassisSpeeds targetChassisSpeeds,
   frc::MecanumDriveWheelSpeeds targetWheelSpeeds,
 
   units::volt_t frontLeftFeedforward,
@@ -907,7 +951,9 @@ void publishControlState(
   double frontLeftMotorOutput,
   double frontRightMotorOutput,
   double backLeftMotorOutput,
-  double backRightMotorOutput
+  double backRightMotorOutput,
+
+  poseInfo currentPose
 
   ) {
   int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -936,6 +982,9 @@ void publishControlState(
   frc::Pose2d poseError = controller->getPoseError();
   frc::Rotation2d rotationError = controller->getRotationError();
 
+  double targetChassisVelocityX = targetChassisSpeeds.vx.value();
+  double targetChassisVelocityY = targetChassisSpeeds.vy.value();
+
   // wheel controllers are actually controlling velocity (not position), so the below is not a mistake
 
   double wheelFrontLeftVelocityError = frontLeftWheelController->GetPositionError();
@@ -953,8 +1002,17 @@ void publishControlState(
   bool wheelRearLeftAtSetpoint =  backLeftWheelController->AtSetpoint();
   bool wheelRearRightAtSetpoint = backRightWheelController->AtSetpoint();
 
+  FLT velocityX = currentPose.messageVelocity.pos[0];
+  FLT velocityY = currentPose.messageVelocity.pos[1];
+
   ControllerStateMessage message = {
     timestamp,
+
+    targetChassisVelocityX,
+    targetChassisVelocityY,
+
+    velocityX,
+    velocityY,
 
     xPositionError,    
     xVelocityError,
@@ -1062,6 +1120,7 @@ double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFe
 }
 
 frc::MecanumDriveWheelSpeeds targetWheelSpeeds;
+frc::ChassisSpeeds targetChassisSpeeds;
 
 units::volt_t frontLeftFeedforward;
 units::volt_t frontRightFeedforward;
@@ -1141,7 +1200,7 @@ void runActiveTrajectory() {
     
     std::cout << "publish trajectory" << std::endl;
 
-    frc::ChassisSpeeds targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
@@ -1264,7 +1323,7 @@ void publishControllerStateTask() {
   ConnectionOptions redisConnectionOptions;
   redisConnectionOptions.type = ConnectionType::UNIX;
   redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
-  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(100);
 
   controllerStateRedisClient = new Redis(redisConnectionOptions);
 
@@ -1278,6 +1337,7 @@ void publishControllerStateTask() {
     timer.waitForNextLoop();
     
     publishControlState(
+      targetChassisSpeeds,
       targetWheelSpeeds,
 
       frontLeftFeedforward,
@@ -1293,7 +1353,9 @@ void publishControllerStateTask() {
       normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward),
       normalizeMotorVoltage(frontRightOutput, frontRightFeedforward),
       normalizeMotorVoltage(backLeftOutput, backLeftFeedforward),
-      normalizeMotorVoltage(backRightOutput, backRightFeedforward)
+      normalizeMotorVoltage(backRightOutput, backRightFeedforward),
+
+      getCurrentPose()
     );
   }
 }
@@ -1308,7 +1370,7 @@ int main(int argc, char **argv) {
   ConnectionOptions redisConnectionOptions;
   redisConnectionOptions.type = ConnectionType::UNIX;
   redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
-  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(5);
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(100);
 
   redis = new Redis(redisConnectionOptions);
 
@@ -1422,7 +1484,12 @@ int main(int argc, char **argv) {
   subscriber->subscribe(COMMAND_KEY);
 
   thread publishControllerStateThread(publishControllerStateTask);
-  publishControllerStateThread.join();
+
+  while(keepRunning) {
+    try {
+      subscriber->consume();
+    } catch (const Error &err) {}
+  }
 
   stopWheels();
 
