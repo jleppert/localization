@@ -1154,8 +1154,6 @@ void runActiveTrajectory() {
       subscriber->consume();
     } catch (const Error &err) {}*/
     
-    std::cout << "next loop" << std::endl;
-
     timer.waitForNextLoop();
 
     int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
@@ -1166,8 +1164,6 @@ void runActiveTrajectory() {
 
     poseInfo robotPose = getCurrentPose();
     
-    std::cout << "got current pose" << std::endl;
-
     if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
       std::cout << "Out of bounds!" << std::endl;
 
@@ -1187,8 +1183,6 @@ void runActiveTrajectory() {
     frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
     json stateTrajectoryJSON;
     
-    std::cout << "sample trajectory" << std::endl;
-
     frc::to_json(stateTrajectoryJSON, state);
 
     json trajectoryInfoJSON;
@@ -1198,8 +1192,6 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
-    std::cout << "publish trajectory" << std::endl;
-
     targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
@@ -1224,62 +1216,6 @@ void runActiveTrajectory() {
     // 0 - back right
     // 1 - front right
 
-    /*publishControlState(
-      targetWheelSpeeds,
-
-      frontLeftFeedforward,
-      frontRightFeedforward,
-      backLeftFeedforward,
-      backRightFeedforward,
-
-      frontLeftOutput,
-      frontRightOutput,
-      backLeftOutput,
-      backRightOutput,
-
-      normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward),
-      normalizeMotorVoltage(frontRightOutput, frontRightFeedforward),
-      normalizeMotorVoltage(backLeftOutput, backLeftFeedforward),
-      normalizeMotorVoltage(backRightOutput, backRightFeedforward)
-    );*/
-    
-    /*std::cout << "publish control state" << std::endl;
-    
-    std::cout << "PID Controller outputs:";
-    std::cout << backRightOutput << std::endl;
-    std::cout << frontRightOutput << std::endl;
-    std::cout << frontLeftOutput << std::endl;
-    std::cout << backLeftOutput << std::endl;
-
-    std::cout << "feedforward outputs:";
-
-    std::cout << backRightFeedforward.value() << std::endl;
-    std::cout << frontRightFeedforward.value() << std::endl;
-    std::cout << frontLeftFeedforward.value() << std::endl;
-    std::cout << backLeftFeedforward.value() << std::endl;
-*/
-
-    /*std::cout << "Target wheel speeds outputs:";
-    std::cout << targetWheelSpeeds.rearRight.value() << std::endl;
-    std::cout << targetWheelSpeeds.frontRight.value() << std::endl;
-    std::cout << targetWheelSpeeds.frontLeft.value() << std::endl;
-    std::cout << targetWheelSpeeds.rearLeft.value() << std::endl;
-
-    // 0 - back right
-    // 1 - front right
-    // 2 - front left
-    // 3 - back left 
-    /*WheelVoltageMessage message = {
-      uint32_t(elapsedTime), 
-      
-      {
-        int16_t (targetWheelSpeeds.rearRight * maxWheelVoltage),
-        int16_t (targetWheelSpeeds.frontRight * maxWheelVoltage),
-        int16_t (targetWheelSpeeds.frontLeft * maxWheelVoltage),
-        int16_t (targetWheelSpeeds.rearLeft * maxWheelVoltage)
-      }
-    };*/
-    
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
     WheelVoltageMessage message = {
@@ -1298,21 +1234,7 @@ void runActiveTrajectory() {
 
     packed.seekg(0);
     
-    std::cout << "packed message" << std::endl;
-
     redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
-    
-    std::cout << "set packed message" << std::endl;
-
-    packed.seekg(0);
-
-    std::string str(packed.str());
-
-    msgpack::object_handle oh =
-    msgpack::unpack(str.data(), str.size());
-
-    msgpack::object deserialized = oh.get();
-    std::cout << deserialized << std::endl;
   }
 
   stopWheels();
