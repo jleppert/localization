@@ -1,0 +1,21 @@
+#!/bin/bash
+
+/usr/bin/jetson_clocks --fan
+
+# power-cycle USB (prevents issues with CAN)
+usb_power_cycle
+
+sleep 2
+
+modprobe can
+modprobe can-raw
+ip link set can0 type can bitrate 1000000
+ip link set up can0
+
+# forward traffic from radar to internet wlan0
+sysctl -w net.ipv4.ip_forward=1
+iptables -A FORWARD --in-interface eth0 -j ACCEPT
+iptables --table nat -A POSTROUTING --out-interface wlan0 -j MASQUERADE
+
+mkdir -p /var/run/redis
+redis-server /home/johnathan/devel/redis.conf
