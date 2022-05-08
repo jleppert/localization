@@ -1,8 +1,9 @@
 #!/bin/bash
 
+# turn jetson fan on and set clocks to max performance mode
 /usr/bin/jetson_clocks --fan
 
-# power-cycle USB (prevents issues with CAN)
+# power-cycle USB (prevents issues with CAN bringup after restart)
 usb_power_cycle
 
 sleep 2
@@ -16,6 +17,10 @@ ip link set up can0
 sysctl -w net.ipv4.ip_forward=1
 iptables -A FORWARD --in-interface eth0 -j ACCEPT
 iptables --table nat -A POSTROUTING --out-interface wlan0 -j MASQUERADE
+
+# expose red pitaya web interface and SCPI server interface on wlan0
+iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 8080 -j DNAT --to-destination 192.168.90.2:80
+iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 5000 -j DNAT --to-destination 192.168.90.2:5000
 
 # start clock sync daemon
 ptpd2 --masteronly --interface eth0
