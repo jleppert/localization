@@ -78,6 +78,7 @@ const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 const string PARAMETERS_KEY = "rover_parameters";
 const string TRAJECTORY_KEY = "rover_trajectory";
 const string COMMAND_KEY = "rover_command";
+const string CONTROLLER_KEY = "rover_controller";
 
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
@@ -1089,6 +1090,8 @@ enum messageTypes {
   TRAJECTORY_MESSAGE,
   COMMAND_MESSAGE,
 
+  CONTROLLER_MESSAGE,
+
   UNKNOWN_MESSAGE
 };
 
@@ -1103,6 +1106,7 @@ messageTypes getMessageType(std::string const& messageType) {
   if(messageType == PARAMETERS_KEY) return PARAMETERS_MESSAGE;
   if(messageType == TRAJECTORY_KEY) return TRAJECTORY_MESSAGE;
   if(messageType == COMMAND_KEY) return COMMAND_MESSAGE;
+  if(messageType == CONTROLLER_KEY) return CONTROLLER_MESSAGE;
 
   return UNKNOWN_MESSAGE;
 }
@@ -1149,6 +1153,8 @@ void runActiveTrajectory() {
   auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
       waypoints, {0.4_mps, 0.4_mps_sq});*/
 
+  redis->publish(CONTROLLER_KEY, "runActiveTrajectory"); 
+  
   while(keepRunning && !trajectoryComplete) {
     /*try {
       subscriber->consume();
@@ -1166,6 +1172,8 @@ void runActiveTrajectory() {
     
     if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
       std::cout << "Out of bounds!" << std::endl;
+      
+      redis->publish(CONTROLLER_KEY, "boundsException"); 
 
       stopWheels();
 
@@ -1174,6 +1182,8 @@ void runActiveTrajectory() {
 
     if(units::second_t(elapsedTime * 0.000001) > activeTrajectory.TotalTime()) {
       trajectoryComplete = true;
+
+      redis->publish(CONTROLLER_KEY, "trajectoryComplete");
 
       std::cout << "Trajectory complete!" << std::endl;
 
