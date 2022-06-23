@@ -21,6 +21,9 @@ iptables --table nat -A POSTROUTING --out-interface wlan0 -j MASQUERADE
 # expose radar data socket
 iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 1001 -j DNAT --to-destination 192.168.90.2:1001
 
+# expose radar process management
+iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 8081 -j DNAT --to-destination 192.168.90.2:8081
+
 # expose red pitaya web interface and SCPI server interface on wlan0
 iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 8080 -j DNAT --to-destination 192.168.90.2:80
 iptables -t nat -A PREROUTING -p tcp -i wlan0 --dport 5000 -j DNAT --to-destination 192.168.90.2:5000
