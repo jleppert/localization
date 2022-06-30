@@ -1309,7 +1309,7 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
-    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, state.pose.Rotation());
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
@@ -1382,15 +1382,35 @@ void runActiveScanPattern() {
         poseInfo currentPose = getCurrentPose();
           
         //frc::Pose2d p0 = frc::Pose2d(*lastSample2d, frc::Rotation2d(88_deg));
-        frc::Pose2d samplePose = frc::Pose2d(*sample2d, frc::Rotation2d(88_deg));
+        frc::Pose2d samplePose = frc::Pose2d(*sample2d, currentPose.pose.Rotation());
         
         frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
         trajectoryConfig.SetKinematics(*driveKinematics);
 
-        activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({currentPose.pose, samplePose}, trajectoryConfig);
-        profileActiveTrajectory();
+        json currentPoseJSON;
+        frc::to_json(currentPoseJSON, currentPose.pose);
 
-        runActiveTrajectory();
+        json samplePoseJSON;
+        frc::to_json(samplePoseJSON, samplePose);
+
+        std::cout << "currentPose:" << std::endl;
+        std::cout << currentPoseJSON.dump() << std::endl;
+
+        std::cout << "samplePose:" << std::endl;
+        std::cout << samplePoseJSON.dump() << std::endl;
+
+        bool generatedTrajectory = false;
+        try {
+          activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({currentPose.pose, samplePose}, trajectoryConfig);
+          generatedTrajectory = true;
+        } catch(const std::exception& e) {
+          std::cout << "Error generating trajectory:" << e.what() << std::endl;
+        }
+
+        if(generatedTrajectory) {
+          profileActiveTrajectory();
+          runActiveTrajectory();
+        }
       }
     }
   }
