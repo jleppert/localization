@@ -689,6 +689,10 @@ frc::ProfiledPIDController<units::radian>* thetaController;
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 
 std::vector<frc::Translation2d> activeWaypoints;
+std::vector<std::vector<std::vector<frc::Translation2d>>> activeScanPatterns;
+
+units::meters_per_second_t scanPatternMaxVelocity;
+units::meters_per_second_squared_t scanPatternMaxAcceleration;
 
 frc::Trajectory activeTrajectory;
 
@@ -831,8 +835,6 @@ void updateParameters(ParametersMessage parametersMessage) {
 
   printf("X P: %lf, X I: %lf, X D: %lf \n", controller->getXController().GetP(), controller->getXController().GetI(), controller->getXController().GetD());
   printf("Y P: %lf, Y I: %lf, Y D: %lf \n", controller->getYController().GetP(), controller->getYController().GetI(), controller->getYController().GetD());
-
-
 }
 
 void updateParametersFromString(string parametersString) {
@@ -846,6 +848,63 @@ void updateParametersFromString(string parametersString) {
   deserialized.convert(parametersMessage);
 
   updateParameters(parametersMessage);
+}
+
+void generateTrajectoriesFromActiveScanPatterns(units::meters_per_second_t trajectoryMaxVelocity, units::meters_per_second_squared_t trajectoryMaxAcceleration) {
+  poseInfo currentPose = getCurrentPose();
+
+  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(trajectoryMaxVelocity, trajectoryMaxAcceleration);
+  trajectoryConfig.SetKinematics(*driveKinematics);
+  //trajectoryConfig.SetReversed(true);
+
+  for(auto pattern = activeScanPatterns.begin(); pattern != activeScanPatterns.end(); ++pattern) {
+    
+    for(auto line = pattern->begin(); line != pattern->end(); ++line) {
+      
+      for(auto sample2d = line->begin(), prev = line->end(); sample2d != line->end(); prev = sample2d, ++sample2d) {
+        if(prev != line->end()) {
+          frc::Pose2d p0 = frc::Pose2d(*prev, frc::Rotation2d(88_deg));
+          frc::Pose2d p1 = frc::Pose2d(*sample2d, frc::Rotation2d(88_deg));
+
+          frc::Trajectory t = frc::TrajectoryGenerator::GenerateTrajectory(p0, {}, p1, trajectoryConfig);
+          units::time::second_t totalTime = t.TotalTime();
+  
+          json profiledTrajectoryJSON = json::array(); 
+          for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
+            frc::Trajectory::State state = t.Sample(units::second_t (i * controllerUpdateRate * 0.001));
+
+            json stateTrajectoryJSON;
+            frc::to_json(stateTrajectoryJSON, state);
+
+            profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
+          }
+
+          printf("trajectory total time: %f \n", (double)totalTime.value());
+
+          redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
+
+        }
+      }
+    }
+  }
+}
+
+void profileActiveTrajectory() {
+  units::time::second_t totalTime = activeTrajectory.TotalTime();
+
+  json profiledTrajectoryJSON = json::array(); 
+  for (int i = 0; i <= int(ceil(totalTime.value() / (controllerUpdateRate * 0.001))); i++) {
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (i * controllerUpdateRate * 0.001));
+
+    json stateTrajectoryJSON;
+    frc::to_json(stateTrajectoryJSON, state);
+
+    profiledTrajectoryJSON.push_back(stateTrajectoryJSON);
+  }
+
+  printf("trajectory total time: %f \n", (double)totalTime.value());
+
+  redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
 }
 
 void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectoryMaxVelocity, units::meters_per_second_squared_t trajectoryMaxAcceleration) {
@@ -872,6 +931,54 @@ void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectory
   printf("trajectory total time: %f \n", (double)totalTime.value());
 
   redis->publish(TRAJECTORY_PROFILE_KEY, profiledTrajectoryJSON.dump()); 
+}
+
+void updateActiveScanPatternsFromJSON(std::string trajectoryJSONString) {
+  activeScanPatterns.clear();
+
+  json trajectoryJSON = json::parse(trajectoryJSONString);
+
+  if(trajectoryJSON.find("samplePoints") != trajectoryJSON.end()) {
+    
+    for(json::iterator pattern = trajectoryJSON["samplePoints"].begin(); pattern != trajectoryJSON["samplePoints"].end(); ++pattern) {
+      
+      std::vector< vector<frc::Translation2d> > scanPattern;
+      
+      for(json::iterator line = pattern.value().begin(); line != pattern.value().end(); ++line) {
+
+        vector<frc::Translation2d> lineSamples;
+
+        for(json::iterator samplePoint = line.value().begin(); samplePoint != line.value().end(); ++samplePoint) {
+          
+          auto point = samplePoint.value().get<std::vector<float>>();
+
+          frc::Translation2d sample2d = frc::Translation2d{units::meter_t {point[0]}, units::meter_t {point[1]}};
+
+          std::cout << sample2d.X().value() << std::endl;
+          std::cout << sample2d.Y().value() << std::endl;
+
+
+          lineSamples.push_back(sample2d);
+        }
+
+        scanPattern.push_back(lineSamples);
+      }
+
+      activeScanPatterns.push_back(scanPattern);
+    }
+  }
+
+  if(trajectoryJSON.find("maxVelocity") != trajectoryJSON.end()) {
+    scanPatternMaxVelocity = units::meters_per_second_t (trajectoryJSON["maxVelocity"].get<double>());
+  }
+
+  if(trajectoryJSON.find("maxAcceleration") != trajectoryJSON.end()) {
+    scanPatternMaxAcceleration = units::meters_per_second_squared_t (trajectoryJSON["maxAcceleration"].get<double>());
+  }
+
+  if(activeScanPatterns.size() > 0) {
+    //generateTrajectoriesFromActiveScanPatterns(trajectoryMaxVelocity, trajectoryMaxAcceleration);
+  }
 }
 
 void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
@@ -1141,11 +1248,6 @@ void runActiveTrajectory() {
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
 
-  lastTrajectoryTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  trajectoryStartTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-
-  bool trajectoryComplete = false;
-
   poseInfo startingRobotPose = getCurrentPose();
 
   /*auto waypoints = std::vector{startingRobotPose.pose,
@@ -1154,7 +1256,12 @@ void runActiveTrajectory() {
       waypoints, {0.4_mps, 0.4_mps_sq});*/
 
   redis->publish(CONTROLLER_KEY, "runActiveTrajectory"); 
-  
+
+  lastTrajectoryTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  trajectoryStartTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+  bool trajectoryComplete = false;
+
   while(keepRunning && !trajectoryComplete) {
     /*try {
       subscriber->consume();
@@ -1202,7 +1309,7 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
-    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, state.pose.Rotation());
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
@@ -1248,7 +1355,47 @@ void runActiveTrajectory() {
   }
 
   stopWheels();
+}
 
+void runActiveScanPattern() {
+  poseInfo startingRobotPose = getCurrentPose();
+
+  redis->publish(CONTROLLER_KEY, "runActiveScanPattern"); 
+ 
+  for(auto pattern = activeScanPatterns.begin(); pattern != activeScanPatterns.end(); ++pattern) {
+    
+    for(auto line = pattern->begin(); line != pattern->end(); ++line) {
+      if(line == pattern->begin()) {
+        poseInfo currentPose = getCurrentPose();
+
+        //auto startingSample2d = line->begin();
+
+        //frc::Pose2d firstLinePosition = frc::Pose2d(*startingSample2d, frc::Rotation2d(0_deg));
+
+        //activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(currentPose.pose, {}, firstLinePosition, trajectoryConfig);
+        //profileActiveTrajectory();
+
+        //runActiveTrajectory();
+      }
+
+      for(auto sample2d = line->begin(), lastSample2d = line->end(); sample2d != line->end(); lastSample2d = sample2d, ++sample2d) {
+        poseInfo currentPose = getCurrentPose();
+          
+        //frc::Pose2d p0 = frc::Pose2d(*lastSample2d, frc::Rotation2d(88_deg));
+        frc::Pose2d samplePose = frc::Pose2d(*sample2d, frc::Rotation2d(88_deg));
+        
+        frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
+        trajectoryConfig.SetKinematics(*driveKinematics);
+
+        activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({currentPose.pose, samplePose}, trajectoryConfig);
+        profileActiveTrajectory();
+
+        runActiveTrajectory();
+      }
+    }
+  }
+  
+  stopWheels();
 }
 
 void publishControllerStateTask() {
@@ -1389,7 +1536,7 @@ int main(int argc, char **argv) {
       case TRAJECTORY_MESSAGE:
         std::cout << "got trajectory! " << msg << std::endl;
 
-        updateActiveWaypointsFromJSON(msg);
+        updateActiveScanPatternsFromJSON(msg);
 
         break;
 
@@ -1404,7 +1551,7 @@ int main(int argc, char **argv) {
             case RUN_TRAJECTORY_COMMAND:
               stopWheels();
 
-              runActiveTrajectory();
+              runActiveScanPattern();
             break;
           }
         }
