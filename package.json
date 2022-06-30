@@ -20,6 +20,6 @@
   },
   "homepage": "https://github.com/Inspectobot/localization#readme",
   "dependencies": {
-    "pm2": "^5.1.2"
+    "pm2": "^5.2.0"
   }
 }
