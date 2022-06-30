@@ -76,6 +76,7 @@ const string WHEEL_STATUS_KEY = "rover_wheel_status";
 
 const string TRAJECTORY_PROFILE_KEY = "rover_trajectory_profile";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
+const string RADAR_SAMPLE_POINT_KEY = "radar_sample_point";
 
 const string PARAMETERS_KEY = "rover_parameters";
 const string TRAJECTORY_KEY = "rover_trajectory";
@@ -86,7 +87,6 @@ const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
-
 
 struct PoseMessage {
   FLT timestamp = 0.0;
@@ -1408,6 +1408,8 @@ void runActiveScanPattern() {
           profileActiveTrajectory();
           runActiveTrajectory();
 
+          poseInfo currentPose = getCurrentPose();
+
           cpr::Response r = cpr::Get(
             cpr::Url{"http://localhost:9005/scan?patternIndex=" + 
               std::to_string(patternIndex) + 
@@ -1416,6 +1418,15 @@ void runActiveScanPattern() {
 
           std::cout << "radar data capture status code: " << std::to_string(r.status_code) << std::endl;
           std::cout << r.text << std::endl;
+
+          if(r.status_code == 200) {
+            std::stringstream packed;
+            msgpack::pack(packed, currentPose.message);
+
+            packed.seekg(0);
+          
+            redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
+          }
         }
 
         sampleIndex++;
