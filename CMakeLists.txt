@@ -76,6 +76,13 @@ find_library(HIREDIS_LIBRARY hiredis)
 
 find_library(REDIS_PLUS_PLUS_LIB redis++)
 
+
+# http client
+include(FetchContent)
+FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git
+                         GIT_TAG db351ffbbadc6c4e9239daaa26e9aefa9f0ec82d) # 1.8.3, from https://github.com/libcpr/cpr/releases
+FetchContent_MakeAvailable(cpr)
+
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
 
@@ -99,7 +106,7 @@ set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
-target_link_libraries(mecanum_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc)
+target_link_libraries(mecanum_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc cpr::cpr)
 
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 

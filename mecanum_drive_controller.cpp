@@ -53,6 +53,8 @@
 
 #include <survive.h>
 
+#include <cpr/cpr.h>
+
 using namespace std;
 using namespace sw::redis;
 using namespace std::chrono;
@@ -985,23 +987,15 @@ void updateActiveWaypointsFromJSON(std::string waypointsJSONString) {
   
   activeWaypoints.clear();
   
-  std::cout << "here 1" << std::endl;
-
   json waypointJSON = json::parse(waypointsJSONString);
   
-  std::cout << "pared!" << std::endl;
-
   if(waypointJSON.find("waypoints") != waypointJSON.end()) {
     
-    std::cout << "here 2" << std::endl;
-
     poseInfo currentPose = getCurrentPose();
 
     //activeWaypoints.push_back(currentPose.pose.Translation());
 
     for(json::iterator it = waypointJSON["waypoints"].begin(); it != waypointJSON["waypoints"].end(); ++it) {
-      std::cout << "here 3" << std::endl;
-
       frc::Pose2d p;
 
       frc::from_json(it.value(), p);
@@ -1362,8 +1356,10 @@ void runActiveScanPattern() {
 
   redis->publish(CONTROLLER_KEY, "runActiveScanPattern"); 
  
+  int patternIndex = 0;
   for(auto pattern = activeScanPatterns.begin(); pattern != activeScanPatterns.end(); ++pattern) {
     
+    int lineIndex = 0;
     for(auto line = pattern->begin(); line != pattern->end(); ++line) {
       if(line == pattern->begin()) {
         poseInfo currentPose = getCurrentPose();
@@ -1378,6 +1374,7 @@ void runActiveScanPattern() {
         //runActiveTrajectory();
       }
 
+      int sampleIndex = 0;
       for(auto sample2d = line->begin(), lastSample2d = line->end(); sample2d != line->end(); lastSample2d = sample2d, ++sample2d) {
         poseInfo currentPose = getCurrentPose();
           
@@ -1410,9 +1407,24 @@ void runActiveScanPattern() {
         if(generatedTrajectory) {
           profileActiveTrajectory();
           runActiveTrajectory();
+
+          cpr::Response r = cpr::Get(
+            cpr::Url{"http://localhost:9005/scan?patternIndex=" + 
+              std::to_string(patternIndex) + 
+              "&lineIndex=" + std::to_string(lineIndex) + 
+              "&sampleIndex=" + std::to_string(sampleIndex)});
+
+          std::cout << "radar data capture status code: " << std::to_string(r.status_code) << std::endl;
+          std::cout << r.text << std::endl;
         }
+
+        sampleIndex++;
       }
+
+      lineIndex++;
     }
+  
+    patternIndex++;
   }
   
   stopWheels();
