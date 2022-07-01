@@ -718,6 +718,7 @@ units::meters_per_second_t scanPatternMaxVelocity;
 units::meters_per_second_squared_t scanPatternMaxAcceleration;
 
 frc::Trajectory activeTrajectory;
+std::string activeTrajectoryJSONString;
 
 int64_t lastTrajectoryTime  = 0;
 int64_t trajectoryStartTime = 0;
@@ -958,6 +959,8 @@ void generateTrajectoryFromActiveWaypoints(units::meters_per_second_t trajectory
 
 void updateActiveScanPatternsFromJSON(std::string trajectoryJSONString) {
   activeScanPatterns.clear();
+
+  activeTrajectoryJSONString = trajectoryJSONString;
 
   json trajectoryJSON = json::parse(trajectoryJSONString);
 
@@ -1338,7 +1341,7 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
-    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, frc::Rotation2d(0_deg));
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
@@ -1390,7 +1393,14 @@ void runActiveScanPattern() {
   poseInfo startingRobotPose = getCurrentPose();
 
   redis->publish(CONTROLLER_KEY, "runActiveScanPattern"); 
- 
+
+  cpr::Response r = cpr::Post(cpr::Url{"http://localhost:9005/start_scan"},
+                   cpr::Body{activeTrajectoryJSONString},
+                   cpr::Header{{"Content-Type", "application/json"}});
+
+  std::cout << "radar data capture start_scan status code: " << std::to_string(r.status_code) << std::endl;
+  std::cout << r.text << std::endl;
+
   int patternIndex = 0;
   for(auto pattern = activeScanPatterns.begin(); pattern != activeScanPatterns.end(); ++pattern) {
     
@@ -1414,7 +1424,8 @@ void runActiveScanPattern() {
         poseInfo currentPose = getCurrentPose();
           
         //frc::Pose2d p0 = frc::Pose2d(*lastSample2d, frc::Rotation2d(88_deg));
-        frc::Pose2d samplePose = frc::Pose2d(*sample2d, currentPose.pose.Rotation());
+
+        frc::Pose2d samplePose = frc::Pose2d(*sample2d, frc::Rotation2d(0_deg));
         
         frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
         trajectoryConfig.SetKinematics(*driveKinematics);
@@ -1463,8 +1474,6 @@ void runActiveScanPattern() {
 
             redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
 
-            redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
-            
             int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
             if(std::distance(sample2d, line->end()) == 1) {
