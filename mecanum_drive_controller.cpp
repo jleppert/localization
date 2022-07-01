@@ -77,6 +77,7 @@ const string WHEEL_STATUS_KEY = "rover_wheel_status";
 const string TRAJECTORY_PROFILE_KEY = "rover_trajectory_profile";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
 const string RADAR_SAMPLE_POINT_KEY = "radar_sample_point";
+const string RADAR_PROCESS_LINE_KEY = "radar_process_line";
 
 const string PARAMETERS_KEY = "rover_parameters";
 const string TRAJECTORY_KEY = "rover_trajectory";
@@ -87,6 +88,26 @@ const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
+
+struct RadarDataLineMessage {
+  RadarDataLineMessage(
+    int64_t _timestamp,
+    int _patternIndex,
+    int _lineIndex
+  ) {
+    timestamp = _timestamp;
+
+    patternIndex = _patternIndex;
+    lineIndex = _lineIndex;
+  }
+    
+  int64_t timestamp = 0;
+
+  int patternIndex = 0;
+  int lineIndex = 0;
+
+  MSGPACK_DEFINE_MAP(timestamp, patternIndex, lineIndex)
+};
 
 struct PoseMessage {
   FLT timestamp = 0.0;
@@ -1437,10 +1458,30 @@ void runActiveScanPattern() {
           if(r.status_code == 200) {
             std::stringstream packed;
             msgpack::pack(packed, currentPose.message);
-
+            
             packed.seekg(0);
-          
+
             redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
+
+            redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
+            
+            int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+            if(std::distance(sample2d, line->end()) == 1) {
+              RadarDataLineMessage message = {
+                timestamp,
+              
+                patternIndex,
+                lineIndex
+              };
+
+              std::stringstream packedRadarDataLineMessage;
+              msgpack::pack(packedRadarDataLineMessage, message);
+
+              packedRadarDataLineMessage.seekg(0);
+             
+              redis->publish(RADAR_PROCESS_LINE_KEY, packedRadarDataLineMessage.str());
+            }
           }
         }
 
@@ -1449,7 +1490,29 @@ void runActiveScanPattern() {
 
       lineIndex++;
     }
-  
+
+    cpr::Response r = cpr::Get(cpr::Url{"http://localhost:9005/proc?patternIndex=" + std::to_string(patternIndex)});
+    std::cout << "patternIndex: " << std::to_string(patternIndex) << ", radar data capture status code for pattern processing: " << std::to_string(r.status_code) << std::endl;
+    std::cout << r.text << std::endl;
+
+    if(r.status_code == 200) {
+      int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+      RadarDataLineMessage message = {
+        timestamp,
+              
+        patternIndex,
+        lineIndex
+      };
+
+      std::stringstream packedRadarDataLineMessage;
+      msgpack::pack(packedRadarDataLineMessage, message);
+
+      packedRadarDataLineMessage.seekg(0);
+     
+      redis->publish(RADAR_PROCESS_LINE_KEY, packedRadarDataLineMessage.str());
+    }
+
     patternIndex++;
   }
   
