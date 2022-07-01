@@ -940,30 +940,44 @@ void updateActiveScanPatternsFromJSON(std::string trajectoryJSONString) {
 
   json trajectoryJSON = json::parse(trajectoryJSONString);
 
+  //std::cout << "parsed" << std::endl;
+
   if(trajectoryJSON.find("samplePoints") != trajectoryJSON.end()) {
     
-    for(json::iterator pattern = trajectoryJSON["samplePoints"].begin(); pattern != trajectoryJSON["samplePoints"].end(); ++pattern) {
-      
+    for(json::iterator samplePoints = trajectoryJSON["samplePoints"].begin(); samplePoints != trajectoryJSON["samplePoints"].end(); ++samplePoints) {
+
       std::vector< vector<frc::Translation2d> > scanPattern;
-      
-      for(json::iterator line = pattern.value().begin(); line != pattern.value().end(); ++line) {
 
-        vector<frc::Translation2d> lineSamples;
+      for(json::iterator pattern = samplePoints.value().begin(); pattern != samplePoints.value().end(); ++pattern) {
+        
+        //std::cout << "pattern" << std::endl;
 
-        for(json::iterator samplePoint = line.value().begin(); samplePoint != line.value().end(); ++samplePoint) {
-          
-          auto point = samplePoint.value().get<std::vector<float>>();
+        //std::cout << pattern.value().dump() << std::endl;
 
-          frc::Translation2d sample2d = frc::Translation2d{units::meter_t {point[0]}, units::meter_t {point[1]}};
+        for(json::iterator line = pattern.value().begin(); line != pattern.value().end(); ++line) {
 
-          std::cout << sample2d.X().value() << std::endl;
-          std::cout << sample2d.Y().value() << std::endl;
+          //std::cout << "line" << std::endl;
+
+          vector<frc::Translation2d> lineSamples;
+
+          for(json::iterator samplePoint = line.value().begin(); samplePoint != line.value().end(); ++samplePoint) {
+            
+            //std::cout << "samplePoint" << std::endl;
+
+            auto point = samplePoint.value().get<std::vector<float>>();
+
+            frc::Translation2d sample2d = frc::Translation2d{units::meter_t {point[0]}, units::meter_t {point[1]}};
+
+            std::cout << sample2d.X().value() << std::endl;
+            std::cout << sample2d.Y().value() << std::endl;
 
 
-          lineSamples.push_back(sample2d);
+            lineSamples.push_back(sample2d);
+          }
+
+          scanPattern.push_back(lineSamples);
         }
 
-        scanPattern.push_back(lineSamples);
       }
 
       activeScanPatterns.push_back(scanPattern);
@@ -1409,7 +1423,8 @@ void runActiveScanPattern() {
           runActiveTrajectory();
 
           poseInfo currentPose = getCurrentPose();
-
+          
+          std::cout << "patternIndex: " << std::to_string(patternIndex) << "lineIndex: " << std::to_string(lineIndex) << "sampleIndex: " << std::to_string(sampleIndex) << std::endl;
           cpr::Response r = cpr::Get(
             cpr::Url{"http://localhost:9005/scan?patternIndex=" + 
               std::to_string(patternIndex) + 
