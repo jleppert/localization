@@ -34,4 +34,4 @@ ptpd2 --masteronly --interface eth0
 mkdir -p /var/run/redis
 redis-server /home/johnathan/devel/redis.conf
 
-sleep 2
+/bin/bash /home/johnathan/devel/localization/startup.sh
