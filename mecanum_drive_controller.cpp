@@ -93,12 +93,19 @@ struct RadarDataLineMessage {
   RadarDataLineMessage(
     int64_t _timestamp,
     int _patternIndex,
-    int _lineIndex
+    int _lineIndex,
+    int _plannedSamples,
+    int _actualSamples,
+    bool _scanComplete
   ) {
     timestamp = _timestamp;
 
     patternIndex = _patternIndex;
     lineIndex = _lineIndex;
+    plannedSamples = _plannedSamples;
+    actualSamples = _actualSamples;
+    scanComplete = _scanComplete;
+
   }
     
   int64_t timestamp = 0;
@@ -106,7 +113,12 @@ struct RadarDataLineMessage {
   int patternIndex = 0;
   int lineIndex = 0;
 
-  MSGPACK_DEFINE_MAP(timestamp, patternIndex, lineIndex)
+  int plannedSamples = 0;
+  int actualSamples = 0;
+
+  bool scanComplete = false;
+
+  MSGPACK_DEFINE_MAP(timestamp, patternIndex, lineIndex, plannedSamples, actualSamples, scanComplete)
 };
 
 struct PoseMessage {
@@ -1405,6 +1417,7 @@ void runActiveScanPattern() {
   for(auto pattern = activeScanPatterns.begin(); pattern != activeScanPatterns.end(); ++pattern) {
     
     int lineIndex = 0;
+    int actualSamples = 0;
     for(auto line = pattern->begin(); line != pattern->end(); ++line) {
       if(line == pattern->begin()) {
         poseInfo currentPose = getCurrentPose();
@@ -1474,6 +1487,8 @@ void runActiveScanPattern() {
 
             redis->publish(RADAR_SAMPLE_POINT_KEY, packed.str());
 
+            actualSamples++;
+
             int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
             if(std::distance(sample2d, line->end()) == 1) {
@@ -1481,7 +1496,10 @@ void runActiveScanPattern() {
                 timestamp,
               
                 patternIndex,
-                lineIndex
+                lineIndex,
+                actualSamples,
+                sampleIndex + 1,
+                false
               };
 
               std::stringstream packedRadarDataLineMessage;
@@ -1497,6 +1515,8 @@ void runActiveScanPattern() {
         sampleIndex++;
       }
 
+      actualSamples = 0;
+
       lineIndex++;
     }
 
@@ -1511,7 +1531,10 @@ void runActiveScanPattern() {
         timestamp,
               
         patternIndex,
-        lineIndex
+        lineIndex,
+        0,
+        0,
+        true
       };
 
       std::stringstream packedRadarDataLineMessage;
