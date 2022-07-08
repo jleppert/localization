@@ -88,6 +88,7 @@ const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
+const string GOTO_HOME_LOCATION_COMMAND_KEY = "GOTO_HOME";
 
 struct RadarDataLineMessage {
   RadarDataLineMessage(
@@ -1249,6 +1250,7 @@ enum messageTypes {
 enum commandTypes {
   STOP_WHEELS_COMMAND,
   RUN_TRAJECTORY_COMMAND,
+  GOTO_HOME_COMMAND,
 
   UNKNOWN_COMMAND
 };
@@ -1265,6 +1267,7 @@ messageTypes getMessageType(std::string const& messageType) {
 commandTypes getCommandType(std::string const& commandType) {
   if(commandType == STOP_WHEELS_COMMAND_KEY) return STOP_WHEELS_COMMAND;
   if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
+  if(commandType == GOTO_HOME_LOCATION_COMMAND_KEY) return GOTO_HOME_COMMAND;
 
   return UNKNOWN_COMMAND;
 }
@@ -1695,16 +1698,44 @@ int main(int argc, char **argv) {
 
       case COMMAND_MESSAGE:
         json commandMessageJSON = json::parse(msg);
-
+        
+        std::cout << msg << std::endl;
         if(commandMessageJSON.find("command") != commandMessageJSON.end()) {
           switch (getCommandType(commandMessageJSON["command"].get<std::string>())) {
+            case GOTO_HOME_COMMAND:
+
+              std::cout << "Home location command" << std::endl;
+              {
+                stopWheels();
+                poseInfo currentRobotPose = getCurrentPose();
+
+                bool generatedTrajectory = false;
+                try {
+                  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(maxVelocity, maxAcceleration);
+                  trajectoryConfig.SetKinematics(*driveKinematics);
+
+                  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({currentRobotPose.pose, frc::Pose2d(0_m, 0_m, frc::Rotation2d(0_deg))}, trajectoryConfig);
+                  generatedTrajectory = true;
+                } catch(const std::exception& e) {
+                  std::cout << "Error generating trajectory:" << e.what() << std::endl;
+                }
+
+                if(generatedTrajectory) {
+                  profileActiveTrajectory();
+                  runActiveTrajectory();
+                }
+
+                break;
+              }
             case STOP_WHEELS_COMMAND:
               stopWheels();
+              break;
 
             case RUN_TRAJECTORY_COMMAND:
               stopWheels();
 
               runActiveScanPattern();
+              break;
             break;
           }
         }
