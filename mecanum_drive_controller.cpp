@@ -900,10 +900,10 @@ void generateTrajectoriesFromActiveScanPatterns(units::meters_per_second_t traje
       
       for(auto sample2d = line->begin(), prev = line->end(); sample2d != line->end(); prev = sample2d, ++sample2d) {
         if(prev != line->end()) {
-          frc::Pose2d p0 = frc::Pose2d(*prev, frc::Rotation2d(88_deg));
-          frc::Pose2d p1 = frc::Pose2d(*sample2d, frc::Rotation2d(88_deg));
+          frc::Pose2d p0 = frc::Pose2d(*prev, frc::Rotation2d(0_deg));
+          frc::Pose2d p1 = frc::Pose2d(*sample2d, frc::Rotation2d(0_deg));
 
-          frc::Trajectory t = frc::TrajectoryGenerator::GenerateTrajectory(p0, {}, p1, trajectoryConfig);
+          frc::Trajectory t = frc::TrajectoryGenerator::GenerateTrajectory({p0, p1}, trajectoryConfig);
           units::time::second_t totalTime = t.TotalTime();
   
           json profiledTrajectoryJSON = json::array(); 
@@ -1335,11 +1335,40 @@ void runActiveTrajectory() {
     }
 
     if(units::second_t(elapsedTime * 0.000001) > activeTrajectory.TotalTime()) {
-      trajectoryComplete = true;
+      poseInfo robotPose = getCurrentPose();
+ 
+      frc::Pose2d endingPose = activeTrajectory.States().back().pose;
 
-      redis->publish(CONTROLLER_KEY, "trajectoryComplete");
+      if(abs(endingPose.X().value() - robotPose.pose.X().value()) <= poseToleranceX.value() &&
+         abs(endingPose.Y().value() - robotPose.pose.Y().value()) <= poseToleranceY.value()) {
 
-      std::cout << "Trajectory complete!" << std::endl;
+        trajectoryComplete = true;
+
+        redis->publish(CONTROLLER_KEY, "trajectoryComplete");
+
+        std::cout << "Trajectory complete!" << std::endl;
+      } else {
+        
+        bool generatedTrajectory = false;
+        try {
+          frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
+          trajectoryConfig.SetKinematics(*driveKinematics);
+
+          activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({robotPose.pose, endingPose}, trajectoryConfig);
+          generatedTrajectory = true;
+        } catch(const std::exception& e) {
+          std::cout << "Error generating trajectory:" << e.what() << std::endl;
+        }
+
+        if(generatedTrajectory) {
+          profileActiveTrajectory();
+          runActiveTrajectory();
+        } else {
+          trajectoryComplete = true;
+          redis->publish(CONTROLLER_KEY, "trajectoryComplete");
+          std::cout << "Trajectory complete!" << std::endl;
+        }
+      }
 
       continue; 
     }
@@ -1422,29 +1451,38 @@ void runActiveScanPattern() {
     int lineIndex = 0;
     int actualSamples = 0;
     for(auto line = pattern->begin(); line != pattern->end(); ++line) {
+      frc::Rotation2d desiredRotation;
+
       if(line == pattern->begin()) {
-        poseInfo currentPose = getCurrentPose();
-
         //auto startingSample2d = line->begin();
-
+        desiredRotation = frc::Rotation2d(0_deg);
         //frc::Pose2d firstLinePosition = frc::Pose2d(*startingSample2d, frc::Rotation2d(0_deg));
 
         //activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(currentPose.pose, {}, firstLinePosition, trajectoryConfig);
         //profileActiveTrajectory();
 
         //runActiveTrajectory();
+      } else {
+        desiredRotation = frc::Rotation2d(90_deg);
       }
 
       int sampleIndex = 0;
+      
       for(auto sample2d = line->begin(), lastSample2d = line->end(); sample2d != line->end(); lastSample2d = sample2d, ++sample2d) {
         poseInfo currentPose = getCurrentPose();
           
         //frc::Pose2d p0 = frc::Pose2d(*lastSample2d, frc::Rotation2d(88_deg));
+        frc::Translation2d currentSample = *sample2d;
+         
+        double angle = atan2(currentSample.Y().value() - currentPose.pose.Translation().Y().value(), currentSample.X().value() - currentPose.pose.Translation().X().value());
 
-        frc::Pose2d samplePose = frc::Pose2d(*sample2d, frc::Rotation2d(0_deg));
+        std::cout << "angle: " << std::to_string(angle) << std::endl;
+
+        frc::Pose2d samplePose = frc::Pose2d(*sample2d, desiredRotation);
         
         frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
         trajectoryConfig.SetKinematics(*driveKinematics);
+        trajectoryConfig.SetReversed(false);
 
         json currentPoseJSON;
         frc::to_json(currentPoseJSON, currentPose.pose);
@@ -1464,6 +1502,17 @@ void runActiveScanPattern() {
           generatedTrajectory = true;
         } catch(const std::exception& e) {
           std::cout << "Error generating trajectory:" << e.what() << std::endl;
+         
+          std::cout << "Reversing trajectory..." << std::endl;
+           
+          /*try {
+            trajectoryConfig.SetReversed(true);
+
+            activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({currentPose.pose, samplePose}, trajectoryConfig);
+            generatedTrajectory = true;
+          } catch(const std::exception& e) {
+            std::cout << "Error generating trajectory:" << e.what() << std::endl;
+          }*/
         }
 
         if(generatedTrajectory) {
@@ -1525,7 +1574,7 @@ void runActiveScanPattern() {
 
     cpr::Response r = cpr::Get(cpr::Url{"http://localhost:9005/proc?patternIndex=" + std::to_string(patternIndex)});
     std::cout << "patternIndex: " << std::to_string(patternIndex) << ", radar data capture status code for pattern processing: " << std::to_string(r.status_code) << std::endl;
-    std::cout << r.text << std::endl;
+    //std::cout << r.text << std::endl;
 
     if(r.status_code == 200) {
       int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
