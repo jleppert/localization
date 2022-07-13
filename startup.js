@@ -4,7 +4,7 @@ const pm2 = require('pm2'),
 var develRoot = path.join(__dirname, '../');
 
 var processes = {
-  index: path.join(develRoot, 'scan_review', 'index.js'),
+  index: path.join(develRoot, 'scan_review', 'scan_review.sh'),
   gm6020_can_redis_driver: path.join(develRoot, 'localization', 'bin', 'gm6020_can_redis_driver'),
   survive_redis_driver: path.join(develRoot, 'localization', 'bin', 'survive_redis_driver'),
   mecanum_drive_controller: path.join(develRoot, 'localization', 'bin', 'mecanum_drive_controller'),
