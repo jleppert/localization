@@ -58,7 +58,7 @@ struct CameraPoseMessage {
     rot[0] = orientation.ox;
     rot[1] = orientation.oy;
     rot[2] = orientation.oz;
-    rot[3] = orientation.oz;
+    rot[3] = orientation.ow;
   }
 
   int64_t timestamp;
@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
   Camera zed;
   InitParameters cameraParams;
   cameraParams.coordinate_units = UNIT::METER;
+  cameraParams.depth_mode = DEPTH_MODE::ULTRA;
   cameraParams.coordinate_system = COORDINATE_SYSTEM::RIGHT_HANDED_Z_UP;
   cameraParams.sdk_verbose = true;
   
