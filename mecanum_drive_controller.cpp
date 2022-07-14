@@ -23,6 +23,7 @@
 
 #include <frc/kinematics/MecanumDriveKinematics.h>
 #include <frc/kinematics/MecanumDriveWheelSpeeds.h>
+#include <frc/kinematics/MecanumDriveOdometry.h>
 
 #include <frc/trajectory/Trajectory.h>
 #include <frc/trajectory/TrajectoryConfig.h>
@@ -68,6 +69,8 @@ using radians_per_second_squared_t =
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 const string POSE_DATA_KEY = "rover_pose";
+const string POSE_WHEEL_ODOMETRY_KEY = "rover_wheel_odometry_pose";
+
 const string POSE_VELOCITY_DATA_KEY = "rover_pose_velocity";
 const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
 
@@ -123,21 +126,48 @@ struct RadarDataLineMessage {
 };
 
 struct PoseMessage {
-  FLT timestamp = 0.0;
+  int64_t timestamp = 0.0;
+  FLT trackerTimestamp = 0.0;
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, pos, rot)
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
 };
 
+PoseMessage poseMessageFromPose2d(int64_t timestamp, FLT trackerTimestamp, frc::Pose2d pose) {
+  PoseMessage message;
+
+  message.timestamp = timestamp;
+  message.trackerTimestamp = trackerTimestamp;
+
+  frc::Translation2d translation = pose.Translation();
+  frc::Rotation2d rotation = pose.Rotation();
+
+  // x, y, z
+  message.pos[0] = translation.X().value();
+  message.pos[1] = translation.Y().value();
+  message.pos[2] = 0.0;
+
+  double yaw = rotation.Radians().value();
+
+  // x, y, z, w
+  message.rot[0] = cos(yaw/2) * sin(yaw/2);
+  message.rot[1] = cos(yaw/2) * sin(yaw/2);
+  message.rot[2] = sin(yaw/2) * cos(yaw/2);
+  message.rot[3] = cos(yaw/2) * sin(yaw/2);
+  
+  return message;
+}
+
 struct VelocityMessage {
-  FLT timestamp;
+  int64_t timestamp = 0;
+  FLT trackerTimestamp = 0.0;
 
   std::array<FLT, 3> pos   = {0.0, 0.0, 0.0};
   std::array<FLT, 3> theta = {0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, pos, theta)
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, theta)
 };
 
 struct ControllerStateMessage {
@@ -149,7 +179,6 @@ struct ControllerStateMessage {
 
     FLT _velocityX,
     FLT _velocityY,
-
 
     double _xPositionError,
     double _xVelocityError,
@@ -419,6 +448,7 @@ struct ParametersMessage {
   double wheelDiameter = 0.09;
 
   int controllerUpdateRate = 100;
+  int wheelOdometryUpdateRate = 100;
 
   double maxXPosition = 0.6;
   double maxYPosition = 0.6;
@@ -478,6 +508,7 @@ struct ParametersMessage {
     wheelDiameter,
 
     controllerUpdateRate,
+    wheelOdometryUpdateRate,
 
     maxXPosition,
     maxYPosition,
@@ -565,6 +596,7 @@ int16_t velocityToRPM(units::meters_per_second_t speed) {
 
 Redis* redis;
 Redis* controllerStateRedisClient;
+Redis* driveOdometryRedisClient;
 
 void stopWheels() {
   WheelVoltageMessage message { 0, { 0, 0, 0, 0 } };
@@ -662,6 +694,7 @@ units::meter_t wheelBase;
 units::meter_t wheelDiameter;
 
 int controllerUpdateRate;
+int wheelOdometryUpdateRate;
 
 double maxXPosition;
 double maxYPosition;
@@ -710,6 +743,7 @@ int16_t maxWheelVoltage = 30000;
 
 frc::MecanumDriveKinematics* driveKinematics;
 frc::HolonomicDriveController* controller;
+frc::MecanumDriveOdometry* driveOdometry;
 
 frc2::PIDController* frontLeftWheelController;
 frc2::PIDController* frontRightWheelController;
@@ -768,6 +802,7 @@ void updateParameters(ParametersMessage parametersMessage) {
   );
 
   controllerUpdateRate = parametersMessage.controllerUpdateRate;
+  wheelOdometryUpdateRate   = parametersMessage.wheelOdometryUpdateRate;
 
   frontLeftWheelControllerP = parametersMessage.frontLeftWheelControllerP; 
   frontLeftWheelControllerI = parametersMessage.frontLeftWheelControllerI; 
@@ -866,6 +901,14 @@ void updateParameters(ParametersMessage parametersMessage) {
       (frc2::PIDController) *yController,
       (frc::ProfiledPIDController<units::radian>) *thetaController
     );
+  }
+
+  if(driveOdometry == NULL) {
+    driveOdometry = new frc::MecanumDriveOdometry(
+      (frc::MecanumDriveKinematics) *driveKinematics,
+      frc::Rotation2d(),
+      frc::Pose2d()
+    ); 
   }
 
   controller->SetTolerance(frc::Pose2d{poseToleranceX, poseToleranceY, frc::Rotation2d{poseToleranceTheta}});
@@ -1641,6 +1684,63 @@ void publishControllerStateTask() {
 
       getCurrentPose()
     );
+  }
+}
+
+void driveOdometryTask() {
+  ConnectionOptions redisConnectionOptions;
+  redisConnectionOptions.type = ConnectionType::UNIX;
+  redisConnectionOptions.path = "/var/run/redis/redis-server.sock";
+  redisConnectionOptions.socket_timeout = std::chrono::milliseconds(100);
+
+  driveOdometryRedisClient = new Redis(redisConnectionOptions);
+
+  printf("Started drive odometry publish task\n");
+
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(wheelOdometryUpdateRate);
+
+  driveOdometry->ResetPosition(frc::Pose2d(), frc::Rotation2d());
+
+  while(keepRunning) {
+    timer.waitForNextLoop();
+    
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+   
+    // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+    frc::MecanumDriveWheelSpeeds currentWheelSpeeds = frc::MecanumDriveWheelSpeeds{
+      units::meters_per_second_t(rpmToVelocity(wheelStatus.velocity[2])),
+      units::meters_per_second_t(rpmToVelocity(wheelStatus.velocity[1])),
+      units::meters_per_second_t(rpmToVelocity(wheelStatus.velocity[3])),
+      units::meters_per_second_t(rpmToVelocity(wheelStatus.velocity[0]))
+    };
+
+    // TODO: use angular rate from forward kinematics
+    poseInfo currentPose = getCurrentPose();
+
+    driveOdometry->UpdateWithTime(
+      units::second_t (wheelStatus.timestamp * 0.000001),
+      currentPose.pose.Rotation(),
+      currentWheelSpeeds
+    );
+
+    frc::Pose2d updatedOdometryPose = driveOdometry->GetPose();
+    
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+    PoseMessage message = poseMessageFromPose2d(
+      int64_t(currentMicro - startupTimestamp),
+      wheelStatus.timestamp,
+      updatedOdometryPose
+    );
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+  
+    packed.seekg(0);
+
+    redis->set(POSE_WHEEL_ODOMETRY_KEY, packed.str()); 
   }
 }
 
