@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
   Camera zed;
   InitParameters cameraParams;
   cameraParams.coordinate_units = UNIT::METER;
-  cameraParams.coordinate_system = COORDINATE_SYSTEM::RIGHT_HANDED_Y_UP;
+  cameraParams.coordinate_system = COORDINATE_SYSTEM::RIGHT_HANDED_Z_UP;
   cameraParams.sdk_verbose = true;
   
   /*
@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
       sl::RESOLUTION::HD720
       sl::RESOLUTION::VGA
   */
-  cameraParams.camera_resolution = sl::RESOLUTION::VGA;
+  cameraParams.camera_resolution = sl::RESOLUTION::HD2K;
 
   auto returnedState = zed.open(cameraParams);
   if (returnedState != ERROR_CODE::SUCCESS) {
