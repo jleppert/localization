@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.0.0)
-project (YOSTLABS-3SPACE-SENSOR)
+project (localization)
 
 # output location
  set (CMAKE_RUNTIME_OUTPUT_DIRECTORY                ${PROJECT_SOURCE_DIR}/bin/)
@@ -9,6 +9,8 @@ project (YOSTLABS-3SPACE-SENSOR)
  set (CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_SOURCE_DIR}/bin/)
 
 set(CMAKE_BUILD_TYPE Debug)
+
+option(LINK_SHARED_ZED "Link with the ZED SDK shared executable" ON)
 
 # Linux global build options
 add_definitions (-DLINUX)
@@ -62,6 +64,11 @@ set (YOSTLABS_3SPACE_SENSOR_LIBRARIES yostlabs-3space-sensor )
 set (YOSTLABS_3SPACE_SENSOR_DEFINITIONS ${PROJECT_DEFINITIONS})
 set (YOSTLABS_3SPACE_SENSOR_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 
+
+# zed camera
+find_package(ZED 3 REQUIRED)
+find_package(CUDA ${ZED_CUDA_VERSION} REQUIRED)
+
 # include Eigen
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
@@ -86,9 +93,23 @@ FetchContent_MakeAvailable(cpr)
 # executables
 include_directories(${PROJECT_SOURCE_DIR}/utils ${EIGEN3_INCLUDE_DIR})
 
+include_directories(${ZED_INCLUDE_DIRS})
+include_directories(${CUDA_INCLUDE_DIRS})
+
+link_directories(${ZED_LIBRARY_DIR})
+link_directories(${CUDA_LIBRARY_DIRS})
+
+if (LINK_SHARED_ZED)
+    SET(ZED_LIBS ${ZED_LIBRARIES} ${CUDA_CUDA_LIBRARY} ${CUDA_CUDART_LIBRARY})
+else()
+    SET(ZED_LIBS ${ZED_STATIC_LIBRARIES} ${CUDA_CUDA_LIBRARY} ${CUDA_LIBRARY})
+endif()
+
 add_executable(mecanum_drive_controller ${PROJECT_SOURCE_DIR}/mecanum_drive_controller.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
 
 add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
+
+add_executable(zed_localization ${PROJECT_SOURCE_DIR}/zed_localization.cpp)
 
 add_executable(survive_redis_driver ${PROJECT_SOURCE_DIR}/survive_redis_driver.cpp)
 
@@ -102,6 +123,8 @@ set_target_properties(mecanum_drive_controller PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(3space_redis_driver PROPERTIES CXX_STANDARD 17)
 
+set_target_properties(zed_localization PROPERTIES CXX_STANDARD 17)
+
 set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
@@ -109,6 +132,8 @@ set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
 target_link_libraries(mecanum_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc cpr::cpr)
 
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
+
+target_link_libraries(zed_localization ${ZED_LIBS} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
 target_link_libraries(survive_redis_driver survive -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
