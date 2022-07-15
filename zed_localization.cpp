@@ -27,7 +27,7 @@ using namespace sl;
 using namespace std;
 using namespace sw::redis;
 
-int64_t startupTimestamp;
+uint64_t startupTimestamp;
 
 Redis* redisClient;
 
@@ -44,7 +44,7 @@ const string POSE_KEY = "rover_camera_pose";
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 struct CameraPoseMessage {
-  CameraPoseMessage(int64_t _timestamp, long long unsigned int _cameraTimestamp, sl::Pose _pose) {
+  CameraPoseMessage(uint64_t _timestamp, long long unsigned int _cameraTimestamp, sl::Pose _pose) {
     timestamp = _timestamp;
     cameraTimestamp = _cameraTimestamp;
 
@@ -61,7 +61,7 @@ struct CameraPoseMessage {
     rot[3] = orientation.ow;
   }
 
-  int64_t timestamp;
+  uint64_t timestamp = 0;
   long long unsigned int cameraTimestamp;
 
   std::array<float, 3> pos = {0.0, 0.0, 0.0};
@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
   if(timestamp) {
     string timestampString = *timestamp;
     
-    startupTimestamp = int64_t(atoll(timestampString.c_str()));
+    startupTimestamp = uint64_t(atoll(timestampString.c_str()));
   } else {
     std::cout << "Startup timestamp not set or invalid" << std::endl;
 
@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
         int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
         CameraPoseMessage message = {
-          uint32_t(currentMicro - startupTimestamp),
+          uint64_t(currentMicro - startupTimestamp),
 
           cameraPose.timestamp, 
           cameraPose

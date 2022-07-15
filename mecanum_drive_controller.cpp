@@ -90,12 +90,100 @@ const string CONTROLLER_KEY = "rover_controller";
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
+const string RUN_CALIBRATION_COMMAND_KEY = "RUN_CALIBRATION";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
 const string GOTO_HOME_LOCATION_COMMAND_KEY = "GOTO_HOME";
 
+uint64_t startupTimestamp;
+
+units::meters_per_second_t maxVelocity;
+units::meters_per_second_squared_t maxAcceleration;
+units::radians_per_second_t maxAngularVelocity;
+units::unit_t<radians_per_second_squared_t> maxAngularAcceleration;
+
+units::meter_t trackWidth;
+units::meter_t wheelBase;
+units::meter_t wheelDiameter;
+
+int controllerUpdateRate;
+int wheelOdometryUpdateRate;
+
+double maxXPosition;
+double maxYPosition;
+
+units::meter_t linearTolerance;
+units::radian_t angularTolerance;
+
+units::meter_t poseToleranceX;
+units::meter_t poseToleranceY;
+units::radian_t poseToleranceTheta;
+
+double xControllerP;
+double xControllerI;
+double xControllerD;
+
+double yControllerP;
+double yControllerI;
+double yControllerD;
+
+double thetaControllerP;
+double thetaControllerI;
+double thetaControllerD;
+
+double frontLeftWheelControllerP = 1.0;
+double frontLeftWheelControllerI = 0.0;
+double frontLeftWheelControllerD = 0.0;
+
+double frontRightWheelControllerP = 1.0;
+double frontRightWheelControllerI = 0.0;
+double frontRightWheelControllerD = 0.0;
+
+double backLeftWheelControllerP = 1.0;
+double backLeftWheelControllerI = 0.0;
+double backLeftWheelControllerD = 0.0;
+
+double backRightWheelControllerP = 1.0;
+double backRightWheelControllerI = 0.0;
+double backRightWheelControllerD = 0.0;
+
+double wheelMotorFeedforwardkS = 0.0797;
+double wheelMotorFeedforwardkV = 0.012;
+double wheelMotorFeedforwardkA = 0.00002;
+
+int16_t minWheelVoltage = -30000;
+int16_t maxWheelVoltage = 30000;
+
+frc::MecanumDriveKinematics* driveKinematics;
+frc::HolonomicDriveController* controller;
+frc::MecanumDriveOdometry* driveOdometry;
+
+frc2::PIDController* frontLeftWheelController;
+frc2::PIDController* frontRightWheelController;
+frc2::PIDController* backLeftWheelController;
+frc2::PIDController* backRightWheelController;
+
+frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
+
+frc2::PIDController* xController;
+frc2::PIDController* yController;
+frc::ProfiledPIDController<units::radian>* thetaController;
+
+frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
+
+std::vector<frc::Translation2d> activeWaypoints;
+std::vector<std::vector<std::vector<frc::Translation2d>>> activeScanPatterns;
+
+units::meters_per_second_t scanPatternMaxVelocity;
+units::meters_per_second_squared_t scanPatternMaxAcceleration;
+
+frc::Trajectory activeTrajectory;
+std::string activeTrajectoryJSONString;
+
+sw::redis::Subscriber* subscriber;
+
 struct RadarDataLineMessage {
   RadarDataLineMessage(
-    int64_t _timestamp,
+    uint64_t _timestamp,
     int _patternIndex,
     int _lineIndex,
     int _plannedSamples,
@@ -112,7 +200,7 @@ struct RadarDataLineMessage {
 
   }
     
-  int64_t timestamp = 0;
+  uint64_t timestamp = 0;
 
   int patternIndex = 0;
   int lineIndex = 0;
@@ -126,7 +214,7 @@ struct RadarDataLineMessage {
 };
 
 struct PoseMessage {
-  int64_t timestamp = 0.0;
+  uint64_t timestamp = 0.0;
   FLT trackerTimestamp = 0.0;
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
@@ -135,7 +223,7 @@ struct PoseMessage {
   MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
 };
 
-PoseMessage poseMessageFromPose2d(int64_t timestamp, FLT trackerTimestamp, frc::Pose2d pose) {
+PoseMessage poseMessageFromPose2d(uint64_t timestamp, FLT trackerTimestamp, frc::Pose2d pose) {
   PoseMessage message;
 
   message.timestamp = timestamp;
@@ -152,16 +240,21 @@ PoseMessage poseMessageFromPose2d(int64_t timestamp, FLT trackerTimestamp, frc::
   double yaw = rotation.Radians().value();
 
   // x, y, z, w
-  message.rot[0] = cos(yaw/2) * sin(yaw/2);
+  /*message.rot[0] = cos(yaw/2) * sin(yaw/2);
   message.rot[1] = cos(yaw/2) * sin(yaw/2);
   message.rot[2] = sin(yaw/2) * cos(yaw/2);
-  message.rot[3] = cos(yaw/2) * sin(yaw/2);
+  message.rot[3] = cos(yaw/2) * sin(yaw/2);*/
+
+  message.rot[0] = 0.0;
+  message.rot[1] = 0.0;
+  message.rot[2] = 0.0;
+  message.rot[3] = 0.0;
   
   return message;
 }
 
 struct VelocityMessage {
-  int64_t timestamp = 0;
+  uint64_t timestamp = 0;
   FLT trackerTimestamp = 0.0;
 
   std::array<FLT, 3> pos   = {0.0, 0.0, 0.0};
@@ -172,7 +265,7 @@ struct VelocityMessage {
 
 struct ControllerStateMessage {
   ControllerStateMessage(
-    int64_t _timestamp,
+    uint64_t _timestamp,
     
     double _targetChassisVelocityX,
     double _targetChassisVelocityY,
@@ -298,7 +391,7 @@ struct ControllerStateMessage {
     backRightMotorOutput = _backRightMotorOutput;
   }
 
-  int64_t timestamp = 0;
+  uint64_t timestamp = 0;
 
   double targetChassisVelocityX = 0;
   double targetChassisVelocityY = 0;
@@ -558,14 +651,14 @@ struct ParametersMessage {
 };
 
 struct WheelVoltageMessage {
-  uint32_t timestamp; 
+  uint64_t timestamp; 
   int16_t voltage[4];  
 
   MSGPACK_DEFINE_MAP(timestamp, voltage)
 };
 
 struct WheelStatusMessage {
-  uint32_t timestamp;
+  uint64_t timestamp;
 
   float angle[4];
   float velocity[4];
@@ -576,22 +669,18 @@ struct WheelStatusMessage {
 };
 
 struct WheelVelocityMessage {
-  uint32_t timestamp; 
+  uint64_t timestamp; 
   int16_t velocity[4];  
 
   MSGPACK_DEFINE_MAP(timestamp, velocity)
 };
 
-# define TAU M_PI * 2
-# define WHEEL_RADIUS 45
-
-
 double rpmToVelocity(int16_t rpm) {
-  return ((double(rpm) / 60) * (M_PI * 2) * (WHEEL_RADIUS * 0.001));
+  return ((double(rpm) / 60) * (M_PI * 2) * (wheelDiameter.value() / 2));
 }
 
 int16_t velocityToRPM(units::meters_per_second_t speed) {
-  return int16_t ((60 * speed) / ((WHEEL_RADIUS * 0.001 * M_PI) * 2));
+  return int16_t ((60 * speed) / (((wheelDiameter.value() / 2) * M_PI) * 2));
 }
 
 Redis* redis;
@@ -621,31 +710,68 @@ void intHandler(int dummy) {
 }
 
 struct poseInfo {
-  poseInfo(PoseMessage _message, VelocityMessage _messageVelocity, frc::Pose2d _pose) {
-    message = _message;
-    messageVelocity = _messageVelocity;
-    pose    = _pose;
-
+  poseInfo(PoseMessage _localizedPoseMessage, VelocityMessage _messageVelocity, frc::Pose2d _pose, frc::Pose2d _odometryPose) {
+    localizedPoseMessage = _localizedPoseMessage;
+    messageVelocity      = _messageVelocity;
+    pose                 = _pose;
+    odometryPose         = _odometryPose;
   }
 
-  PoseMessage message;
+  PoseMessage localizedPoseMessage;
   VelocityMessage messageVelocity;
+  
   frc::Pose2d pose;
+  frc::Pose2d odometryPose;
 };
 
-poseInfo getCurrentPose() {
-  auto pose = redis->get(POSE_DATA_KEY);
+frc::Rotation2d quatToRotation2d(PoseMessage poseMessage) {
+  frc::Rotation2d rotation = frc::Rotation2d(
+    units::radian_t(
+      atan2(
+        2 * (
+        (poseMessage.rot[0] * poseMessage.rot[3]) +
+        (poseMessage.rot[1] * poseMessage.rot[2])
+       ),
+       1 - (
+         2 * (
+              (poseMessage.rot[2] * poseMessage.rot[2]) +
+              (poseMessage.rot[3] * poseMessage.rot[3])
+             )
+         )
+      )
+    )
+  );
 
+  //frc::Rotation2d noRotation = frc::Rotation2d{0_deg};
+
+  return rotation;
+}
+
+poseInfo getCurrentPose() {
+  auto localizedPose = redis->get(POSE_DATA_KEY);
+  auto odometryPose = redis->get(POSE_WHEEL_ODOMETRY_KEY);
   auto velocity = redis->get(POSE_VELOCITY_DATA_KEY);
     
-  string s = *pose;
+  // localized pose
+  string s = *localizedPose;
   msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
 
   msgpack::object deserialized = oh.get();
 
-  PoseMessage poseMessage;
-  deserialized.convert(poseMessage);
+  PoseMessage localizedPoseMessage;
+  deserialized.convert(localizedPoseMessage);
+  
+  // wheel odometry pose
+  string sO = *odometryPose;
+  msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
 
+  msgpack::object deserializedO = ohS.get();
+
+  PoseMessage odometryPoseMessage;
+  deserializedO.convert(odometryPoseMessage);
+
+  
+  // velocity
   string sV = *velocity;
   msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
 
@@ -654,14 +780,23 @@ poseInfo getCurrentPose() {
   VelocityMessage velocityMessage;
   deserializedV.convert(velocityMessage);
 
-  frc::Rotation2d heading = frc::Rotation2d(units::radian_t (
-    atan2(2*((poseMessage.rot[0]*poseMessage.rot[3])+(poseMessage.rot[1]*poseMessage.rot[2])),1-(2*((poseMessage.rot[2]*poseMessage.rot[2])+(poseMessage.rot[3]*poseMessage.rot[3]))))));
+  // localized
+  frc::Rotation2d localizedHeading = quatToRotation2d(localizedPoseMessage);
+  frc::Pose2d localizedPose2d = frc::Pose2d(
+    units::meter_t(localizedPoseMessage.pos[0] * -1),
+    units::meter_t(localizedPoseMessage.pos[1] * -1),
+    localizedHeading
+  );
 
-  //frc::Rotation2d noHeading = frc::Rotation2d{0_deg};
-
-  frc::Pose2d robotPose{units::meter_t(poseMessage.pos[0] * -1), units::meter_t(poseMessage.pos[1] * -1), heading};
-
-  poseInfo p = { poseMessage, velocityMessage, robotPose };
+  // odometry
+  frc::Rotation2d odometryHeading = quatToRotation2d(odometryPoseMessage);
+  frc::Pose2d odometryPose2d = frc::Pose2d(
+    units::meter_t(odometryPoseMessage.pos[0]), 
+    units::meter_t(odometryPoseMessage.pos[1]), 
+    odometryHeading
+  );
+  
+  poseInfo p = { localizedPoseMessage, velocityMessage, localizedPose2d, odometryPose2d };
 
   return p;
 }
@@ -680,97 +815,7 @@ WheelStatusMessage getCurrentWheelStatus() {
   return wheelMessage;
 }
 
-int64_t startupTimestamp;
-
 ParametersMessage lastParametersMessage;
-
-units::meters_per_second_t maxVelocity;
-units::meters_per_second_squared_t maxAcceleration;
-units::radians_per_second_t maxAngularVelocity;
-units::unit_t<radians_per_second_squared_t> maxAngularAcceleration;
-
-units::meter_t trackWidth;
-units::meter_t wheelBase;
-units::meter_t wheelDiameter;
-
-int controllerUpdateRate;
-int wheelOdometryUpdateRate;
-
-double maxXPosition;
-double maxYPosition;
-
-units::meter_t linearTolerance;
-units::radian_t angularTolerance;
-
-units::meter_t poseToleranceX;
-units::meter_t poseToleranceY;
-units::radian_t poseToleranceTheta;
-
-double xControllerP;
-double xControllerI;
-double xControllerD;
-
-double yControllerP;
-double yControllerI;
-double yControllerD;
-
-double thetaControllerP;
-double thetaControllerI;
-double thetaControllerD;
-
-double frontLeftWheelControllerP = 1.0;
-double frontLeftWheelControllerI = 0.0;
-double frontLeftWheelControllerD = 0.0;
-
-double frontRightWheelControllerP = 1.0;
-double frontRightWheelControllerI = 0.0;
-double frontRightWheelControllerD = 0.0;
-
-double backLeftWheelControllerP = 1.0;
-double backLeftWheelControllerI = 0.0;
-double backLeftWheelControllerD = 0.0;
-
-double backRightWheelControllerP = 1.0;
-double backRightWheelControllerI = 0.0;
-double backRightWheelControllerD = 0.0;
-
-double wheelMotorFeedforwardkS = 0.0797;
-double wheelMotorFeedforwardkV = 0.012;
-double wheelMotorFeedforwardkA = 0.00002;
-
-int16_t minWheelVoltage = -30000;
-int16_t maxWheelVoltage = 30000;
-
-frc::MecanumDriveKinematics* driveKinematics;
-frc::HolonomicDriveController* controller;
-frc::MecanumDriveOdometry* driveOdometry;
-
-frc2::PIDController* frontLeftWheelController;
-frc2::PIDController* frontRightWheelController;
-frc2::PIDController* backLeftWheelController;
-frc2::PIDController* backRightWheelController;
-
-frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
-
-frc2::PIDController* xController;
-frc2::PIDController* yController;
-frc::ProfiledPIDController<units::radian>* thetaController;
-
-frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
-
-std::vector<frc::Translation2d> activeWaypoints;
-std::vector<std::vector<std::vector<frc::Translation2d>>> activeScanPatterns;
-
-units::meters_per_second_t scanPatternMaxVelocity;
-units::meters_per_second_squared_t scanPatternMaxAcceleration;
-
-frc::Trajectory activeTrajectory;
-std::string activeTrajectoryJSONString;
-
-int64_t lastTrajectoryTime  = 0;
-int64_t trajectoryStartTime = 0;
-
-sw::redis::Subscriber* subscriber;
 
 void updateParameters(ParametersMessage parametersMessage) {
   lastParametersMessage = parametersMessage;
@@ -1153,7 +1198,7 @@ void publishControlState(
 
   ) {
   int64_t currentTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  int64_t timestamp = currentTimestamp - startupTimestamp;
+  uint64_t timestamp = uint64_t(currentTimestamp - startupTimestamp);
 
   double xPositionError = controller->getXController().GetPositionError();
   double xVelocityError = controller->getXController().GetVelocityError();
@@ -1293,6 +1338,7 @@ enum messageTypes {
 enum commandTypes {
   STOP_WHEELS_COMMAND,
   RUN_TRAJECTORY_COMMAND,
+  RUN_CALIBRATION_COMMAND,
   GOTO_HOME_COMMAND,
 
   UNKNOWN_COMMAND
@@ -1309,6 +1355,7 @@ messageTypes getMessageType(std::string const& messageType) {
 
 commandTypes getCommandType(std::string const& commandType) {
   if(commandType == STOP_WHEELS_COMMAND_KEY) return STOP_WHEELS_COMMAND;
+  if(commandType == RUN_CALIBRATION_COMMAND_KEY) return RUN_CALIBRATION_COMMAND;
   if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
   if(commandType == GOTO_HOME_LOCATION_COMMAND_KEY) return GOTO_HOME_COMMAND;
 
@@ -1333,6 +1380,91 @@ double frontRightOutput;
 double backLeftOutput;
 double backRightOutput;
 
+double lastCalibrationRun = 0.5;
+void runCalibration() {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  poseInfo startingPose = getCurrentPose();
+
+  frc::TrapezoidProfile<units::meters> profile{
+    frc::TrapezoidProfile<units::meters>::Constraints{0.5_mps, 0.2_mps_sq},
+    frc::TrapezoidProfile<units::meters>::State{units::meter_t(lastCalibrationRun), 0_mps},
+    frc::TrapezoidProfile<units::meters>::State{startingPose.odometryPose.Translation().X(), 0_mps}};
+  
+  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t lastTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+ 
+  bool profileComplete = false; 
+  while(keepRunning && !profileComplete) {
+    timer.waitForNextLoop();
+
+    poseInfo robotPose = getCurrentPose();
+
+    if(units::second_t(timer.elapsedTime()) < profile.TotalTime()) {
+      std::cout << "running!" << std::endl;
+      
+      frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
+      
+      json setPointJSON;
+    
+      frc::Pose2d desiredPose = frc::Pose2d(setPoint.position, 0_m, frc::Rotation2d(0_deg));
+    
+      targetChassisSpeeds = controller->Calculate(robotPose.odometryPose, desiredPose, setPoint.velocity, frc::Rotation2d(0_deg));
+      
+      targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+      frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontLeft);
+      frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontRight);
+      backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearLeft);
+      backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearRight);
+
+      WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+      // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+
+      frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
+      frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
+      backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
+      backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+
+      // wheel data is
+      // 3 - back left
+      // 2 - front left
+      // 0 - back right
+      // 1 - front right
+
+      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+      WheelVoltageMessage message = {
+        uint64_t(currentMicro - startupTimestamp),
+        
+        {
+          int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+          int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+          int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+          int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+        }
+      };
+
+      std::stringstream packed;
+      msgpack::pack(packed, message);
+
+      packed.seekg(0);
+      
+      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+    } else {
+      std::cout << "profile complete!" << std::endl;
+      profileComplete = true;
+    }
+  }
+
+  lastCalibrationRun = lastCalibrationRun * -1;
+
+  stopWheels();
+}
+
 void runActiveTrajectory() {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -1340,15 +1472,7 @@ void runActiveTrajectory() {
 
   poseInfo startingRobotPose = getCurrentPose();
 
-  /*auto waypoints = std::vector{startingRobotPose.pose,
-                               frc::Pose2d{0.3_m, 0.0_m, startingRobotPose.pose.Rotation() }};
-  auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
-      waypoints, {0.4_mps, 0.4_mps_sq});*/
-
   redis->publish(CONTROLLER_KEY, "runActiveTrajectory"); 
-
-  lastTrajectoryTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  trajectoryStartTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
   bool trajectoryComplete = false;
 
@@ -1358,12 +1482,6 @@ void runActiveTrajectory() {
     } catch (const Error &err) {}*/
     
     timer.waitForNextLoop();
-
-    int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-    int64_t dt = currentTime - lastTrajectoryTime;
-
-    lastTrajectoryTime = currentTime;
-    int64_t elapsedTime = currentTime - trajectoryStartTime;
 
     poseInfo robotPose = getCurrentPose();
     
@@ -1377,7 +1495,7 @@ void runActiveTrajectory() {
       continue;
     }
 
-    if(units::second_t(elapsedTime * 0.000001) > activeTrajectory.TotalTime()) {
+    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
       poseInfo robotPose = getCurrentPose();
  
       frc::Pose2d endingPose = activeTrajectory.States().back().pose;
@@ -1416,14 +1534,14 @@ void runActiveTrajectory() {
       continue; 
     }
 
-    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (timer.elapsedTime()));
     json stateTrajectoryJSON;
     
     frc::to_json(stateTrajectoryJSON, state);
 
     json trajectoryInfoJSON;
 
-    trajectoryInfoJSON["timestamp"] = robotPose.message.timestamp;
+    trajectoryInfoJSON["timestamp"] = robotPose.localizedPoseMessage.timestamp;
     trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
@@ -1455,7 +1573,7 @@ void runActiveTrajectory() {
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
     WheelVoltageMessage message = {
-      uint32_t(currentMicro - startupTimestamp),
+      uint64_t(currentMicro - startupTimestamp),
       
       {
         int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
@@ -1576,7 +1694,7 @@ void runActiveScanPattern() {
 
           if(r.status_code == 200) {
             std::stringstream packed;
-            msgpack::pack(packed, currentPose.message);
+            msgpack::pack(packed, currentPose.localizedPoseMessage);
             
             packed.seekg(0);
 
@@ -1584,11 +1702,11 @@ void runActiveScanPattern() {
 
             actualSamples++;
 
-            int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+            int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
             if(std::distance(sample2d, line->end()) == 1) {
               RadarDataLineMessage message = {
-                timestamp,
+                uint64_t(currentMicro - startupTimestamp),
               
                 patternIndex,
                 lineIndex,
@@ -1620,10 +1738,10 @@ void runActiveScanPattern() {
     //std::cout << r.text << std::endl;
 
     if(r.status_code == 200) {
-      int64_t timestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
       RadarDataLineMessage message = {
-        timestamp,
+        uint64_t(currentMicro - startupTimestamp),
               
         patternIndex,
         lineIndex,
@@ -1717,11 +1835,12 @@ void driveOdometryTask() {
     };
 
     // TODO: use angular rate from forward kinematics
-    poseInfo currentPose = getCurrentPose();
+    //poseInfo currentPose = getCurrentPose();
 
     driveOdometry->UpdateWithTime(
       units::second_t (wheelStatus.timestamp * 0.000001),
-      currentPose.pose.Rotation(),
+      frc::Rotation2d(),
+      //currentPose.pose.Rotation(),
       currentWheelSpeeds
     );
 
@@ -1730,7 +1849,7 @@ void driveOdometryTask() {
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
     PoseMessage message = poseMessageFromPose2d(
-      int64_t(currentMicro - startupTimestamp),
+      uint64_t(currentMicro - startupTimestamp),
       wheelStatus.timestamp,
       updatedOdometryPose
     );
@@ -1762,7 +1881,7 @@ int main(int argc, char **argv) {
   if(timestamp) {
     string timestampString = *timestamp;
     
-    startupTimestamp = int64_t(atoll(timestampString.c_str()));
+    startupTimestamp = uint64_t(atoll(timestampString.c_str()));
   } else {
     std::cout << "Startup timestamp not set or invalid" << std::endl;
 
@@ -1880,6 +1999,13 @@ int main(int argc, char **argv) {
               stopWheels();
               break;
 
+            case RUN_CALIBRATION_COMMAND:
+              stopWheels();
+
+              runCalibration();
+
+              break;
+            
             case RUN_TRAJECTORY_COMMAND:
               stopWheels();
 
@@ -1896,6 +2022,7 @@ int main(int argc, char **argv) {
   subscriber->subscribe(COMMAND_KEY);
 
   thread publishControllerStateThread(publishControllerStateTask);
+  thread driveOdometryThread(driveOdometryTask);
 
   while(keepRunning) {
     try {

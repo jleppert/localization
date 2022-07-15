@@ -34,7 +34,7 @@ using namespace std::chrono;
 using namespace std;
 using namespace sw::redis;
 
-int64_t startupTimestamp;
+uint64_t startupTimestamp;
 
 Redis* odometryMonitorRedisClient;
 Redis* commandReceiverRedisClient;
@@ -109,7 +109,7 @@ void wheelVelocityTask() {
       );
 
       int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-      message.timestamp = uint32_t(currentMicro - startupTimestamp);
+      message.timestamp = uint64_t(currentMicro - startupTimestamp);
 
       std::stringstream packed;
       msgpack::pack(packed, message);
@@ -129,7 +129,7 @@ struct wheelEncoderMessage {
   //uint32_t timer[4];
   //uint8_t state[4];
 
-  uint32_t timestamp;
+  uint64_t timestamp;
   
   MSGPACK_DEFINE_MAP(timestamp, rpm, enc)
 };
@@ -140,7 +140,7 @@ struct batteryStateMessage {
   int32_t current;
   uint8_t percent;
 
-  uint32_t timestamp;
+  uint64_t timestamp;
 
   MSGPACK_DEFINE_MAP(timestamp, adc_val, temperature, current, percent) 
 };
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-  startupTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count(); 
+  startupTimestamp = uint64_t(duration_cast<microseconds>(system_clock::now().time_since_epoch()).count());
   
   printf("Startup timestamp: %s \n", std::to_string(startupTimestamp).c_str());
 

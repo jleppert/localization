@@ -41,7 +41,7 @@ using namespace std::chrono;
 using namespace std;
 using namespace sw::redis;
 
-int64_t startupTimestamp;
+uint64_t startupTimestamp;
 
 Redis* odometryMonitorRedisClient;
 Redis* commandReceiverRedisClient;
@@ -61,14 +61,14 @@ const string WHEEL_STATUS_KEY = "rover_wheel_status";
 const string STARTUP_TIMESTAMP_KEY ="rover_startup_timestamp";
 
 struct WheelVoltageMessage {
-  uint32_t timestamp; 
+  uint64_t timestamp; 
   int16_t voltage[4];  
 
   MSGPACK_DEFINE_MAP(timestamp, voltage)
 };
 
 struct WheelStatusMessage {
-  uint32_t timestamp;
+  uint64_t timestamp;
 
   float angle[4];
   float velocity[4];
@@ -171,7 +171,7 @@ void wheelVoltageTask() {
       }
 
       int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-      message.timestamp = uint32_t(currentMicro - startupTimestamp);
+      message.timestamp = uint64_t(currentMicro - startupTimestamp);
 
       std::stringstream packed;
       msgpack::pack(packed, message);
@@ -347,7 +347,7 @@ void wheelMonitorTask() {
     }
 
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-    averageMessage.timestamp = uint32_t(currentMicro - startupTimestamp);
+    averageMessage.timestamp = uint64_t(currentMicro - startupTimestamp);
 
     if(ENABLE_LOGGING) logAvgMotorDataToFile(message);
 
@@ -372,7 +372,7 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, intHandler);
 	signal(SIGINT, intHandler);
 
-  startupTimestamp = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count(); 
+  startupTimestamp = uint64_t(duration_cast<microseconds>(system_clock::now().time_since_epoch()).count());
   
   printf("Startup timestamp: %s \n", std::to_string(startupTimestamp).c_str());
 

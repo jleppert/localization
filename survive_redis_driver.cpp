@@ -48,7 +48,7 @@ static void log_fn(SurviveSimpleContext *actx, SurviveLogLevel logLevel, const c
 }
 
 struct PoseMessage {
-  PoseMessage(int64_t _timestamp, FLT _trackerTimestamp, SurvivePose _pose) {
+  PoseMessage(uint64_t _timestamp, FLT _trackerTimestamp, SurvivePose _pose) {
     timestamp = _timestamp;
     trackerTimestamp = _trackerTimestamp;
 
@@ -62,7 +62,7 @@ struct PoseMessage {
     rot[3] = _pose.Rot[3];
   }
 
-  int64_t timestamp;
+  uint64_t timestamp;
   FLT trackerTimestamp;
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
@@ -72,7 +72,7 @@ struct PoseMessage {
 };
 
 struct VelocityMessage {
-  VelocityMessage(int64_t _timestamp, FLT _trackerTimestamp, SurviveVelocity _pose, SurviveAngularVelocity _theta) {
+  VelocityMessage(uint64_t _timestamp, FLT _trackerTimestamp, SurviveVelocity _pose, SurviveAngularVelocity _theta) {
     timestamp = _timestamp;
     trackerTimestamp = _trackerTimestamp;
 
@@ -85,7 +85,7 @@ struct VelocityMessage {
     theta[2] = _theta[2];
   }
 
-  int64_t timestamp;
+  uint64_t timestamp;
   FLT trackerTimestamp;
 
   std::array<FLT, 3> pos   = {0.0, 0.0, 0.0};
@@ -106,13 +106,13 @@ int main(int argc, char **argv) {
 
   auto redis = Redis(redisConnectionOptions);
 
-  int64_t startupTimestamp;
+  uint64_t startupTimestamp;
 
   auto timestamp = redis.get(STARTUP_TIMESTAMP_KEY);
   if(timestamp) {
     string timestampString = *timestamp;
     
-    startupTimestamp = int64_t(atoll(timestampString.c_str()));
+    startupTimestamp = uint64_t(atoll(timestampString.c_str()));
   } else {
     std::cout << "Startup timestamp not set or invalid" << std::endl;
 
@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
         int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
         
         PoseMessage message = {
-          uint32_t(currentMicro - startupTimestamp),
+          uint64_t(currentMicro - startupTimestamp),
 
           timecode, 
           pose
@@ -191,7 +191,7 @@ int main(int argc, char **argv) {
         int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
         PoseMessage message = {
-          uint32_t(currentMicro - startupTimestamp),
+          uint64_t(currentMicro - startupTimestamp),
 
           timecode, 
           pose
@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
         }
 
         VelocityMessage velMessage = {
-          uint32_t(currentMicro - startupTimestamp),
+          uint64_t(currentMicro - startupTimestamp),
 
           timecode, 
           velocity, 
