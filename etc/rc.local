@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# turn jetson fan on and set clocks to max performance mode
+# turn jetson fan on and set clocks to max performance mode (MODE_15W_6CORE)
+nvpmodel -m2
 /usr/bin/jetson_clocks --fan
 
 # power-cycle USB (prevents issues with CAN bringup after restart)
