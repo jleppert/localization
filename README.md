@@ -20,3 +20,8 @@
 - redis-plus-plus (58084931ed1a056d91fe96da7b9ea81fa023560a)
 - hiredis (eaa2a7ee77f4ce25e73a23e6030d4fa4d138cb11)
 - allwpilib (fork)
+
+## Flashing Tegra EMMC Modules
+
+## Update bootloader:
+- `./flash.sh -r -k CPUBL-CFG jetson-xavier-nx-devkit-emmc mmcblk0p1` 
