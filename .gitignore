@@ -1,3 +1,6 @@
+*.sw*
+*.csv
+
 # Prerequisites
 *.d
 

@@ -112,6 +112,8 @@ endif()
 
 add_executable(mecanum_drive_controller ${PROJECT_SOURCE_DIR}/mecanum_drive_controller.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
 
+add_executable(differential_drive_controller ${PROJECT_SOURCE_DIR}/differential_drive_controller.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
+
 add_executable(3space_redis_driver ${PROJECT_SOURCE_DIR}/3space_redis_driver.cpp ${PROJECT_SOURCE_DIR}/utils/LoopTimer.cpp)
 
 if(WITH_ZED)
@@ -128,6 +130,8 @@ set_target_properties(gm6020_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
 set_target_properties(mecanum_drive_controller PROPERTIES CXX_STANDARD 17)
 
+set_target_properties(differential_drive_controller PROPERTIES CXX_STANDARD 17)
+
 set_target_properties(3space_redis_driver PROPERTIES CXX_STANDARD 17)
 
 if(WITH_ZED)
@@ -139,6 +143,8 @@ set_target_properties(survive_redis_driver PROPERTIES CXX_STANDARD 17)
 set_target_properties(robomaster_can_redis_driver PROPERTIES CXX_STANDARD 17)
 
 target_link_libraries(mecanum_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc cpr::cpr)
+
+target_link_libraries(differential_drive_controller wpilibc wpiutil wpimath ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} Eigen3::Eigen -lmsgpackc cpr::cpr)
 
 target_link_libraries(3space_redis_driver ${YOSTLABS_3SPACE_SENSOR_LIBRARIES} -ludev -lpthread ${HIREDIS_LIBRARY} ${REDIS_PLUS_PLUS_LIB} -lmsgpackc)
 
