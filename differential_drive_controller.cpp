@@ -748,34 +748,40 @@ poseInfo getCurrentPose() {
   auto localizedPose = redis->get(POSE_DATA_KEY);
   auto odometryPose = redis->get(POSE_WHEEL_ODOMETRY_KEY);
   auto velocity = redis->get(POSE_VELOCITY_DATA_KEY);
-    
-  // localized pose
-  string s = *localizedPose;
-  msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
-
-  msgpack::object deserialized = oh.get();
-
+  
   PoseMessage localizedPoseMessage;
-  deserialized.convert(localizedPoseMessage);
+  if(localizedPose) { 
+    // localized pose
+    string s = *localizedPose;
+    msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+
+    msgpack::object deserialized = oh.get();
+
+    deserialized.convert(localizedPoseMessage);
+  }
   
-  // wheel odometry pose
-  string sO = *odometryPose;
-  msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
-
-  msgpack::object deserializedO = ohS.get();
-
   PoseMessage odometryPoseMessage;
-  deserializedO.convert(odometryPoseMessage);
+  if(odometryPose) { 
+    // wheel odometry pose
+    string sO = *odometryPose;
+    msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
 
+    msgpack::object deserializedO = ohS.get();
+
+    deserializedO.convert(odometryPoseMessage);
+  }
   
-  // velocity
-  string sV = *velocity;
-  msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
-
-  msgpack::object deserializedV = ohV.get();
-
   VelocityMessage velocityMessage;
-  deserializedV.convert(velocityMessage);
+  if(velocity) {
+    // velocity
+    string sV = *velocity;
+    msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
+
+    msgpack::object deserializedV = ohV.get();
+
+    VelocityMessage velocityMessage;
+    deserializedV.convert(velocityMessage);
+  }
 
   // localized
   frc::Rotation2d localizedHeading = quatToRotation2d(localizedPoseMessage);
@@ -1758,7 +1764,7 @@ void driveOdometryTask() {
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
    
     // 1 - back right, 2 - front right, 3 - front left, 4 - back left
-    // TODO: is this correct?
+    // TODO: is this correct? nope!!
     frc::DifferentialDriveWheelSpeeds currentWheelSpeeds = frc::DifferentialDriveWheelSpeeds{
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[2] + wheelStatus.velocity[3]) / 2)),
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2)),
@@ -1769,8 +1775,8 @@ void driveOdometryTask() {
 
     driveOdometry->Update(
       frc::Rotation2d(),
-      units::meter_t(currentWheelSpeeds.left.value() * ((currentMicro - lastMicro) * 0.000001)),
-      units::meter_t(currentWheelSpeeds.right.value() * ((currentMicro - lastMicro) * 0.000001))
+      units::meter_t(currentWheelSpeeds.left.value()),
+      units::meter_t(currentWheelSpeeds.right.value())
     );
 
     lastMicro = currentMicro;
@@ -1848,7 +1854,7 @@ int main(int argc, char **argv) {
   }
 
   poseInfo robotPose = getCurrentPose();
-
+  
   auto waypoints = redis->get(TRAJECTORY_KEY);
 
   if(waypoints) {

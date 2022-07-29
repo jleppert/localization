@@ -751,34 +751,40 @@ poseInfo getCurrentPose() {
   auto localizedPose = redis->get(POSE_DATA_KEY);
   auto odometryPose = redis->get(POSE_WHEEL_ODOMETRY_KEY);
   auto velocity = redis->get(POSE_VELOCITY_DATA_KEY);
-    
-  // localized pose
-  string s = *localizedPose;
-  msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
-
-  msgpack::object deserialized = oh.get();
-
+  
   PoseMessage localizedPoseMessage;
-  deserialized.convert(localizedPoseMessage);
+  if(localizedPose) { 
+    // localized pose
+    string s = *localizedPose;
+    msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+
+    msgpack::object deserialized = oh.get();
+
+    deserialized.convert(localizedPoseMessage);
+  }
   
-  // wheel odometry pose
-  string sO = *odometryPose;
-  msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
-
-  msgpack::object deserializedO = ohS.get();
-
   PoseMessage odometryPoseMessage;
-  deserializedO.convert(odometryPoseMessage);
+  if(odometryPose) { 
+    // wheel odometry pose
+    string sO = *odometryPose;
+    msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
 
+    msgpack::object deserializedO = ohS.get();
+
+    deserializedO.convert(odometryPoseMessage);
+  }
   
-  // velocity
-  string sV = *velocity;
-  msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
-
-  msgpack::object deserializedV = ohV.get();
-
   VelocityMessage velocityMessage;
-  deserializedV.convert(velocityMessage);
+  if(velocity) {
+    // velocity
+    string sV = *velocity;
+    msgpack::object_handle ohV = msgpack::unpack(sV.data(), sV.size());
+
+    msgpack::object deserializedV = ohV.get();
+
+    VelocityMessage velocityMessage;
+    deserializedV.convert(velocityMessage);
+  }
 
   // localized
   frc::Rotation2d localizedHeading = quatToRotation2d(localizedPoseMessage);
