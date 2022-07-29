@@ -210,6 +210,7 @@ struct PoseMessage {
 
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
+  FLT radians = 0.0;
 
   MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
 };
@@ -228,18 +229,19 @@ PoseMessage poseMessageFromPose2d(uint64_t timestamp, FLT trackerTimestamp, frc:
   message.pos[1] = translation.Y().value();
   message.pos[2] = 0.0;
 
-  double yaw = rotation.Radians().value();
+  double yaw = rotation.Degrees().value();
+  
+  double Rx = 0.0;
+  double Ry = 0.0;
+  double Rz = rotation.Degrees().value();
 
   // x, y, z, w
-  /*message.rot[0] = cos(yaw/2) * sin(yaw/2);
-  message.rot[1] = cos(yaw/2) * sin(yaw/2);
-  message.rot[2] = sin(yaw/2) * cos(yaw/2);
-  message.rot[3] = cos(yaw/2) * sin(yaw/2);*/
+  message.rot[0] = (cos(Rx/2) * cos(Ry/2) * cos(Rz/2) + sin(Rx/2) * sin(Ry/2) * sin(Rz/2));
+  message.rot[1] = (sin(Rx/2) * cos(Ry/2) * cos(Rz/2) - cos(Rx/2) * sin(Ry/2) * sin(Rz/2));
+  message.rot[2] = (cos(Rx/2) * sin(Ry/2) * cos(Rz/2) + sin(Rx/2) * cos(Ry/2) * sin(Rz/2));
+  message.rot[3] = (cos(Rx/2) * cos(Ry/2) * sin(Rz/2) - sin(Rx/2) * sin(Ry/2) * cos(Rz/2));
 
-  message.rot[0] = 0.0;
-  message.rot[1] = 0.0;
-  message.rot[2] = 0.0;
-  message.rot[3] = 0.0;
+  message.radians = rotation.Radians().value();
   
   return message;
 }
@@ -796,7 +798,8 @@ poseInfo getCurrentPose() {
   frc::Pose2d odometryPose2d = frc::Pose2d(
     units::meter_t(odometryPoseMessage.pos[0]), 
     units::meter_t(odometryPoseMessage.pos[1]), 
-    odometryHeading
+    //odometryHeading
+    frc::Rotation2d(units::radian_t(odometryPoseMessage.radians))
   );
   
   poseInfo p = { localizedPoseMessage, velocityMessage, localizedPose2d, odometryPose2d };
@@ -1324,24 +1327,42 @@ void runCalibration() {
     frc::TrapezoidProfile<units::meters>::Constraints{0.5_mps, 0.2_mps_sq},
     frc::TrapezoidProfile<units::meters>::State{units::meter_t(lastCalibrationRun), 0_mps},
     frc::TrapezoidProfile<units::meters>::State{startingPose.odometryPose.Translation().X(), 0_mps}};
+
+  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.5_mps, 0.2_mps_sq);
+  trajectoryConfig.SetKinematics(*driveKinematics);
+
+  if(lastCalibrationRun < 0) trajectoryConfig.SetReversed(true);
+
+  frc::Pose2d endingPose = frc::Pose2d(units::meter_t(lastCalibrationRun), 0_m, frc::Rotation2d());
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.odometryPose, endingPose}, trajectoryConfig);
   
-  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  int64_t lastTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
- 
+  profileActiveTrajectory();
+
+  
   bool profileComplete = false; 
   while(keepRunning && !profileComplete) {
     timer.waitForNextLoop();
 
     poseInfo robotPose = getCurrentPose();
 
-    if(units::second_t(timer.elapsedTime()) < profile.TotalTime()) {
+    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
       std::cout << "running!" << std::endl;
       
-      frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
-      
-      frc::Pose2d desiredPose = frc::Pose2d(setPoint.position, 0_m, frc::Rotation2d(0_deg));
+      //frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
+      frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (timer.elapsedTime()));
+      json stateTrajectoryJSON;
+    
+      frc::to_json(stateTrajectoryJSON, state);
 
-      targetChassisSpeeds = controller->Calculate(robotPose.odometryPose, desiredPose, setPoint.velocity, units::radians_per_second_t(0));
+      json trajectoryInfoJSON;
+      
+      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+      trajectoryInfoJSON["timestamp"] = uint64_t(currentMicro - startupTimestamp),
+      trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+      redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    
+      targetChassisSpeeds = controller->Calculate(robotPose.odometryPose, state);
       
       targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
@@ -1364,8 +1385,6 @@ void runCalibration() {
       // 2 - front left
       // 0 - back right
       // 1 - front right
-
-      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
       WheelVoltageMessage message = {
         uint64_t(currentMicro - startupTimestamp),
@@ -1751,11 +1770,10 @@ void driveOdometryTask() {
 
   driveOdometry->ResetPosition(frc::Pose2d(), frc::Rotation2d());
 
-  float leftDistance = 0;
-  float rightDistance = 0;
-  
   int64_t lastMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
+  frc::Pose2d lastPose;
+   
   while(keepRunning) {
     timer.waitForNextLoop();
     
@@ -1763,25 +1781,22 @@ void driveOdometryTask() {
 
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
    
-    // 1 - back right, 2 - front right, 3 - front left, 4 - back left
-    // TODO: is this correct? nope!!
+    // 0 - back right, 1 - front right, 2 - front left, 3 - back left
     frc::DifferentialDriveWheelSpeeds currentWheelSpeeds = frc::DifferentialDriveWheelSpeeds{
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[2] + wheelStatus.velocity[3]) / 2)),
-      units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2)),
+      units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2))
     };
 
-    // TODO: use angular rate from forward kinematics
-    //poseInfo currentPose = getCurrentPose();
-
-    driveOdometry->Update(
-      frc::Rotation2d(),
-      units::meter_t(currentWheelSpeeds.left.value()),
-      units::meter_t(currentWheelSpeeds.right.value())
-    );
-
+    units::second_t deltaTime = units::second_t((currentMicro - lastMicro) * 0.000001);
+    
     lastMicro = currentMicro;
 
-    frc::Pose2d updatedOdometryPose = driveOdometry->GetPose();
+    auto [dx, dy, dTheta] = driveKinematics->ToChassisSpeeds(currentWheelSpeeds);
+
+    frc::Pose2d updatedOdometryPose = lastPose.Exp(
+      {dx * deltaTime, dy * deltaTime, dTheta * deltaTime});
+
+    lastPose = updatedOdometryPose;
     
     PoseMessage message = poseMessageFromPose2d(
       uint64_t(currentMicro - startupTimestamp),
