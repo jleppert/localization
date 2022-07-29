@@ -124,8 +124,8 @@ units::meter_t poseToleranceX;
 units::meter_t poseToleranceY;
 units::radian_t poseToleranceTheta;
 
-units::unit_t<b_unit> differentialDriveControllerB;
-units::unit_t<zeta_unit> differentialDriveControllerZeta;
+units::unit_t<b_unit> ramseteControllerB;
+units::unit_t<zeta_unit> ramseteControllerZeta;
 
 double frontLeftWheelControllerP = 1.0;
 double frontLeftWheelControllerI = 0.0;
@@ -264,10 +264,22 @@ struct ControllerStateMessage {
     FLT _velocityX,
     FLT _velocityY,
 
+    double _xPositionError,
+    double _xVelocityError,
+    double _yPositionError,
+    double _yVelocityError,
+    double _thetaPositionError,
+    double _thetaVelocityError,
+    double _xSetpoint,
+    double _ySetpoint,
+    double _thetaSetpoint,
+    bool _xAtSetpoint,
+    bool _yAtSetpoint,
+    bool _thetaAtSetpoint,
     bool _atPoseReference,
-    
     double _poseErrorX,
     double _poseErrorY,
+    double _rotationError,
 
     double _wheelFrontLeftVelocityError,
     double _wheelFrontRightVelocityError,
@@ -310,10 +322,29 @@ struct ControllerStateMessage {
     velocityX = _velocityX;
     velocityY = _velocityY;
 
+    xPositionError = _xPositionError;
+    xVelocityError = _xVelocityError;
+    
+    yPositionError = _yPositionError;
+    yVelocityError = _yVelocityError;
+    
+    thetaPositionError = _thetaPositionError;
+    thetaVelocityError = _thetaVelocityError;
+    
+    xSetpoint = _xSetpoint;
+    ySetpoint = _ySetpoint;
+    thetaSetpoint = _thetaSetpoint;
+
+    xAtSetpoint = _xAtSetpoint;
+    yAtSetpoint = _yAtSetpoint;
+    thetaAtSetpoint = _thetaAtSetpoint;
+
     atPoseReference = _atPoseReference;
 
     poseErrorX = _poseErrorX;
     poseErrorY = _poseErrorY;
+
+    rotationError = _rotationError;
 
     wheelFrontLeftVelocityError = _wheelFrontLeftVelocityError;
     wheelFrontRightVelocityError = _wheelFrontRightVelocityError;
@@ -359,10 +390,29 @@ struct ControllerStateMessage {
   FLT velocityX = 0;
   FLT velocityY = 0;
 
+  double xPositionError = 0;
+  double xVelocityError = 0;
+
+  double yPositionError = 0;
+  double yVelocityError = 0;
+
+  double thetaPositionError = 0;
+  double thetaVelocityError = 0;
+
+  double xSetpoint = 0;
+  double ySetpoint = 0;
+  double thetaSetpoint = 0;
+
+  bool xAtSetpoint = false;
+  bool yAtSetpoint = false;
+  bool thetaAtSetpoint = false;
+
   bool atPoseReference = false;
 
   double poseErrorX = 0;
   double poseErrorY = 0;
+
+  double rotationError = 0;
 
   double wheelFrontLeftVelocityError = 0;
   double wheelFrontRightVelocityError = 0;
@@ -408,10 +458,28 @@ struct ControllerStateMessage {
     velocityX,
     velocityY,
 
+    xPositionError,
+    xVelocityError,
+
+    yPositionError,
+    yVelocityError,
+
+    thetaPositionError,
+    thetaVelocityError,
+
+    xSetpoint,
+    ySetpoint,
+    thetaSetpoint,
+
+    xAtSetpoint,
+    yAtSetpoint,
+    thetaAtSetpoint,
+
     atPoseReference,
 
     poseErrorX,
     poseErrorY,
+    rotationError,
 
     wheelFrontLeftVelocityError,
     wheelFrontRightVelocityError,
@@ -488,8 +556,8 @@ struct ParametersMessage {
   double thetaControllerI = 0.0;
   double thetaControllerD = 0.0;
 
-  double differentialDriveControllerB = 2.0;
-  double differentialDriveControllerZeta = 0.8;
+  double ramseteControllerB = 2.0;
+  double ramseteControllerZeta = 0.8;
 
   double frontLeftWheelControllerP = 1.0;
   double frontLeftWheelControllerI = 0.0;
@@ -551,8 +619,8 @@ struct ParametersMessage {
     thetaControllerI,
     thetaControllerD,
 
-    differentialDriveControllerB,
-    differentialDriveControllerZeta,
+    ramseteControllerB,
+    ramseteControllerZeta,
 
     frontLeftWheelControllerP,
     frontLeftWheelControllerI,
@@ -796,8 +864,8 @@ void updateParameters(ParametersMessage parametersMessage) {
   minWheelVoltage = parametersMessage.minWheelVoltage;
   maxWheelVoltage = parametersMessage.maxWheelVoltage;
  
-  differentialDriveControllerB = units::unit_t<b_unit>(parametersMessage.differentialDriveControllerB);
-  differentialDriveControllerZeta = units::unit_t<zeta_unit>(parametersMessage.differentialDriveControllerZeta);
+  ramseteControllerB = units::unit_t<b_unit>(parametersMessage.ramseteControllerB);
+  ramseteControllerZeta = units::unit_t<zeta_unit>(parametersMessage.ramseteControllerZeta);
 
   if(frontLeftWheelController == NULL) {
     frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD, units::second_t (1 / controllerUpdateRate));
@@ -826,7 +894,7 @@ void updateParameters(ParametersMessage parametersMessage) {
   wheelMotorFeedforward = new frc::SimpleMotorFeedforward<units::meter>(units::volt_t (wheelMotorFeedforwardkS), units::volt_t(wheelMotorFeedforwardkV) / 1_mps, units::volt_t(wheelMotorFeedforwardkA) / 1_mps_sq);
 
   if(controller == NULL) {
-    controller = new frc::RamseteController(differentialDriveControllerB, differentialDriveControllerZeta);
+    controller = new frc::RamseteController(ramseteControllerB, ramseteControllerZeta);
   }
 
   if(driveOdometry == NULL) {
@@ -1113,10 +1181,29 @@ void publishControlState(
     velocityX,
     velocityY,
 
+    0.0,    
+    0.0,
+
+    0.0,
+    0.0,
+
+    0.0,
+    0.0,
+
+    0.0,
+    0.0,
+    0.0,
+
+    false,
+    false,
+    false,
+
     atPoseReference,
 
     double (poseError.X()),
     double (poseError.Y()),
+
+    0.0,
 
     wheelFrontLeftVelocityError,
     wheelFrontRightVelocityError,
