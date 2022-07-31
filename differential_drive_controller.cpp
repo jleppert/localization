@@ -1315,105 +1315,6 @@ double frontRightOutput;
 double backLeftOutput;
 double backRightOutput;
 
-double lastCalibrationRun = 0.5;
-void runCalibration() {
-  LoopTimer timer;
-	timer.initializeTimer();
-	timer.setLoopFrequency(controllerUpdateRate);
-
-  poseInfo startingPose = getCurrentPose();
-
-  frc::TrapezoidProfile<units::meters> profile{
-    frc::TrapezoidProfile<units::meters>::Constraints{0.5_mps, 0.2_mps_sq},
-    frc::TrapezoidProfile<units::meters>::State{units::meter_t(lastCalibrationRun), 0_mps},
-    frc::TrapezoidProfile<units::meters>::State{startingPose.odometryPose.Translation().X(), 0_mps}};
-
-  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.5_mps, 0.2_mps_sq);
-  trajectoryConfig.SetKinematics(*driveKinematics);
-
-  if(lastCalibrationRun < 0) trajectoryConfig.SetReversed(true);
-
-  frc::Pose2d endingPose = frc::Pose2d(units::meter_t(lastCalibrationRun), 0_m, frc::Rotation2d());
-  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.odometryPose, endingPose}, trajectoryConfig);
-  
-  profileActiveTrajectory();
-
-  
-  bool profileComplete = false; 
-  while(keepRunning && !profileComplete) {
-    timer.waitForNextLoop();
-
-    poseInfo robotPose = getCurrentPose();
-
-    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
-      std::cout << "running!" << std::endl;
-      
-      //frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
-      frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (timer.elapsedTime()));
-      json stateTrajectoryJSON;
-    
-      frc::to_json(stateTrajectoryJSON, state);
-
-      json trajectoryInfoJSON;
-      
-      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-      trajectoryInfoJSON["timestamp"] = uint64_t(currentMicro - startupTimestamp),
-      trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
-
-      redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
-    
-      targetChassisSpeeds = controller->Calculate(robotPose.odometryPose, state);
-      
-      targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
-
-      frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-      frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-      backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-      backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-
-      WheelStatusMessage wheelStatus = getCurrentWheelStatus();
-
-      // 1 - back right, 2 - front right, 3 - front left, 4 - back left
-
-      frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
-      frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
-      backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
-      backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
-
-      // wheel data is
-      // 3 - back left
-      // 2 - front left
-      // 0 - back right
-      // 1 - front right
-
-      WheelVoltageMessage message = {
-        uint64_t(currentMicro - startupTimestamp),
-        
-        {
-          int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
-          int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
-          int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
-          int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
-        }
-      };
-
-      std::stringstream packed;
-      msgpack::pack(packed, message);
-
-      packed.seekg(0);
-      
-      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
-    } else {
-      std::cout << "profile complete!" << std::endl;
-      profileComplete = true;
-    }
-  }
-
-  lastCalibrationRun = lastCalibrationRun * -1;
-
-  stopWheels();
-}
-
 void runActiveTrajectory() {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -1444,7 +1345,7 @@ void runActiveTrajectory() {
       continue;
     }
 
-    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
+    if(units::second_t(timer.elapsedTime()) > activeTrajectory.TotalTime()) {
       poseInfo robotPose = getCurrentPose();
  
       frc::Pose2d endingPose = activeTrajectory.States().back().pose;
@@ -1461,7 +1362,7 @@ void runActiveTrajectory() {
         
         bool generatedTrajectory = false;
         try {
-          frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(scanPatternMaxVelocity, scanPatternMaxAcceleration);
+          frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.1_mps, 0.1_mps_sq);
           trajectoryConfig.SetKinematics(*driveKinematics);
 
           activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({robotPose.pose, endingPose}, trajectoryConfig);
@@ -1542,6 +1443,151 @@ void runActiveTrajectory() {
 
   stopWheels();
 }
+
+void rotateToHeading(frc::Rotation2d heading) {
+  float leftSpeed = -0.5;
+  float rightSpeed = 0.5;
+  
+  frc::DifferentialDriveWheelSpeeds wheelSpeeds = frc::DifferentialDriveWheelSpeeds{
+    units::meters_per_second_t(leftSpeed),
+    units::meters_per_second_t(rightSpeed)
+  };
+
+  auto backFeedforward   = wheelMotorFeedforward->Calculate(wheelSpeeds.left);
+  auto rightFeedforward  = wheelMotorFeedforward->Calculate(wheelSpeeds.right);
+
+  WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+  double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  wheelSpeeds.right.value());
+  double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  wheelSpeeds.left.value());
+  
+  int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  WheelVoltageMessage message = {
+        uint64_t(currentMicro - startupTimestamp),
+        
+        {
+          int16_t (normalizeMotorVoltage(rightOutput, backRightFeedforward)),
+          int16_t (normalizeMotorVoltage(rightOutput, frontRightFeedforward)),
+          int16_t (normalizeMotorVoltage(leftOutput, frontLeftFeedforward)),
+          int16_t (normalizeMotorVoltage(leftOutput, backLeftFeedforward))
+        }
+      };
+
+      std::stringstream packed;
+      msgpack::pack(packed, message);
+
+      packed.seekg(0);
+      
+      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+
+}
+
+double lastCalibrationRun = 0.5;
+void runCalibration() {
+  
+  rotateToHeading(frc::Rotation2d(0_deg));
+  return; 
+  
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  poseInfo startingPose = getCurrentPose();
+
+  frc::TrapezoidProfile<units::meters> profile{
+    frc::TrapezoidProfile<units::meters>::Constraints{0.5_mps, 0.2_mps_sq},
+    frc::TrapezoidProfile<units::meters>::State{units::meter_t(lastCalibrationRun), 0_mps},
+    frc::TrapezoidProfile<units::meters>::State{startingPose.odometryPose.Translation().X(), 0_mps}};
+
+  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.1_mps, 0.3_mps_sq);
+  trajectoryConfig.SetKinematics(*driveKinematics);
+
+  if(lastCalibrationRun < 0) trajectoryConfig.SetReversed(true);
+
+  frc::Pose2d endingPose = frc::Pose2d(units::meter_t(lastCalibrationRun), 0_m, frc::Rotation2d(0_rad));
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.pose, endingPose}, trajectoryConfig);
+  
+  profileActiveTrajectory();
+
+  bool profileComplete = false; 
+  while(keepRunning && !profileComplete) {
+    timer.waitForNextLoop();
+
+    poseInfo robotPose = getCurrentPose();
+
+    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
+      std::cout << "running!" << std::endl;
+      
+      //frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
+      frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (timer.elapsedTime()));
+      json stateTrajectoryJSON;
+    
+      frc::to_json(stateTrajectoryJSON, state);
+
+      json trajectoryInfoJSON;
+      
+      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+      trajectoryInfoJSON["timestamp"] = uint64_t(currentMicro - startupTimestamp),
+      trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+      redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    
+      targetChassisSpeeds = controller->Calculate(robotPose.pose, state);
+      
+      targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+      frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+      frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+      backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+      backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+
+      WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+      // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+
+      //frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
+      //frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
+      //backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
+      //backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+
+      double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  targetWheelSpeeds.right.value());
+      double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  targetWheelSpeeds.left.value());
+
+
+      // wheel data is
+      // 3 - back left
+      // 2 - front left
+      // 0 - back right
+      // 1 - front right
+
+      WheelVoltageMessage message = {
+        uint64_t(currentMicro - startupTimestamp),
+        
+        {
+          int16_t (normalizeMotorVoltage(rightOutput, backRightFeedforward)),
+          int16_t (normalizeMotorVoltage(rightOutput, frontRightFeedforward)),
+          int16_t (normalizeMotorVoltage(leftOutput, frontLeftFeedforward)),
+          int16_t (normalizeMotorVoltage(leftOutput, backLeftFeedforward))
+        }
+      };
+
+      std::stringstream packed;
+      msgpack::pack(packed, message);
+
+      packed.seekg(0);
+      
+      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+    } else {
+      std::cout << "profile complete!" << std::endl;
+      profileComplete = true;
+    }
+  }
+
+  lastCalibrationRun = lastCalibrationRun * -1;
+
+  stopWheels();
+}
+
 
 void runActiveScanPattern() {
   poseInfo startingRobotPose = getCurrentPose();
@@ -1754,6 +1800,21 @@ void publishControllerStateTask() {
   }
 }
 
+#define enc_res 8192
+
+void Absolute2Increment(float &Enc, float &absE, float E, const int N) {
+    float e;
+    e = E - absE;
+    if (e > N/2)             // eg: 4095 - 5  , decreasing pass a round
+        Enc = Enc - N + e;
+    else if (e < -N/2)       // eg: 5 - 4095, increasing pass a round
+        Enc = Enc + N + e;
+    else                     // eg:200 - 250
+        Enc = Enc + e;
+    absE = E;
+}
+
+
 void driveOdometryTask() {
   ConnectionOptions redisConnectionOptions;
   redisConnectionOptions.type = ConnectionType::UNIX;
@@ -1769,35 +1830,111 @@ void driveOdometryTask() {
 	timer.setLoopFrequency(wheelOdometryUpdateRate);
 
   driveOdometry->ResetPosition(frc::Pose2d(), frc::Rotation2d());
+  WheelStatusMessage initialWheelStatus = getCurrentWheelStatus();
+  poseInfo initialPose = getCurrentPose();
 
   int64_t lastMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
 
   frc::Pose2d lastPose;
-   
+
+  float enc_L = 0;             // encoder tics
+  float wheel_L_ang_pos = 0;   // radians
+  float wheel_L_ang_vel = 0;   // radians per second
+  float enc_R = 0;             // encoder tics
+  float wheel_R_ang_pos = 0;   // radians
+  float wheel_R_ang_vel = 0;   // radians per second
+  float robot_angular_pos = 0; // radians
+  float robot_angular_vel = 0; // radians per second
+  float robot_x_pos = 0;       // meters
+  float robot_y_pos = 0;       // meters
+  float robot_x_vel = 0;       // meters per second
+  float robot_y_vel = 0;       // meters per second 
+
+  float wheel_FL_ang_pos = 0; //radians
+  float wheel_FR_ang_pos = 0; //radians
+  float wheel_RL_ang_pos = 0; //radians
+  float wheel_RR_ang_pos = 0; //radians
+
+  float wheel_radius = wheelDiameter.value() / 2;
+  float robot_width = wheelBase.value();
+  float diameter_mod = 1;
+  float tyre_deflection = 1;
+
+  
+  frc::Rotation2d angleOffset = -(initialPose.pose.Rotation());
+  frc::Rotation2d lastAngle = frc::Rotation2d(0_rad);
+
   while(keepRunning) {
     timer.waitForNextLoop();
     
     int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    
+    units::second_t deltaTime = units::second_t((currentMicro - lastMicro) * 0.000001);
+    lastMicro = currentMicro;
 
+    float delay_s = deltaTime.value();
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
-   
+  
+    /*float enc_FL = 0;            // encoder tics
+    float enc_RL = 0;            // encoder tics
+    float enc_FR = 0;            // encoder tics
+    float enc_RR = 0;            // encoder tics
+
+    Absolute2Increment(enc_FR, initialWheelStatus.angle[1], wheelStatus.angle[1], enc_res);
+    Absolute2Increment(enc_RR, initialWheelStatus.angle[0], wheelStatus.angle[0], enc_res);
+    Absolute2Increment(enc_RL, initialWheelStatus.angle[3], wheelStatus.angle[3], enc_res);
+    Absolute2Increment(enc_FL, initialWheelStatus.angle[2], wheelStatus.angle[2], enc_res);
+
+    //std::cout << enc_FR << std::endl;
+
+    wheel_FL_ang_pos = 2 * 3.14 * enc_FL / enc_res;
+    wheel_FR_ang_pos = 2 * 3.14 * enc_FR / enc_res;
+    wheel_RL_ang_pos = 2 * 3.14 * enc_RL / enc_res;
+    wheel_RR_ang_pos = 2 * 3.14 * enc_RR / enc_res;
+
+    enc_L = (enc_FL + enc_RL) / (2 * tyre_deflection);
+    enc_R = (enc_FR + enc_RR) / (2 * tyre_deflection);
+
+    wheel_L_ang_vel = ((2 * 3.14 * enc_L / enc_res) - wheel_L_ang_pos) / delay_s;
+    wheel_R_ang_vel = ((2 * 3.14 * enc_R / enc_res) - wheel_R_ang_pos) / delay_s;
+
+    wheel_L_ang_pos = 2 * 3.14 * enc_L / enc_res;
+    wheel_R_ang_pos = 2 * 3.14 * enc_R / enc_res;
+
+    robot_angular_vel = (((wheel_R_ang_pos - wheel_L_ang_pos) * wheel_radius / (robot_width * diameter_mod)) - robot_angular_pos) / delay_s;
+    robot_angular_pos = (wheel_R_ang_pos - wheel_L_ang_pos) * wheel_radius / (robot_width * diameter_mod);
+    robot_x_vel = (wheel_L_ang_vel * wheel_radius + robot_angular_vel * robot_width / 2) * cos(robot_angular_pos);
+    robot_y_vel = (wheel_L_ang_vel * wheel_radius + robot_angular_vel * robot_width / 2) * sin(robot_angular_pos);
+    robot_x_pos = robot_x_pos + robot_x_vel * delay_s;
+    robot_y_pos = robot_y_pos + robot_y_vel * delay_s;
+
+
+    std::cout << robot_x_pos << " " << robot_y_pos << std::endl;
+    
+    //std::cout << "wheel1 : " << wheelAnglePosition[1] << std::endl;
+    //std::cout << "wheel2 : " << wheelAnglePosition[2] << std::endl;
+    //std::cout << "wheel3 : " << wheelAnglePosition[3] << std::endl;
+    */
     // 0 - back right, 1 - front right, 2 - front left, 3 - back left
     frc::DifferentialDriveWheelSpeeds currentWheelSpeeds = frc::DifferentialDriveWheelSpeeds{
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[2] + wheelStatus.velocity[3]) / 2)),
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2))
     };
 
-    units::second_t deltaTime = units::second_t((currentMicro - lastMicro) * 0.000001);
-    
     lastMicro = currentMicro;
 
-    auto [dx, dy, dTheta] = driveKinematics->ToChassisSpeeds(currentWheelSpeeds);
+    poseInfo currentPose = getCurrentPose();
+    frc::Rotation2d angle = currentPose.pose.Rotation() + angleOffset;
 
+    auto [dx, dy, dTheta] = driveKinematics->ToChassisSpeeds(currentWheelSpeeds);
+    
     frc::Pose2d updatedOdometryPose = lastPose.Exp(
-      {dx * deltaTime, dy * deltaTime, dTheta * deltaTime});
+      {dx * deltaTime, dy * deltaTime, (angle - lastAngle).Radians()});
 
     lastPose = updatedOdometryPose;
-    
+    lastAngle = angle;
+
+    //frc::Pose2d updatedOdometryPose = frc::Pose2d(units::meter_t(robot_x_pos), units::meter_t(robot_y_pos), frc::Rotation2d(units::radian_t(robot_angular_pos)));
     PoseMessage message = poseMessageFromPose2d(
       uint64_t(currentMicro - startupTimestamp),
       wheelStatus.timestamp,
