@@ -18,6 +18,7 @@
 #include <frc/MathUtil.h>
 
 #include <frc/controller/PIDController.h>
+#include <frc/controller/ProfiledPIDController.h>
 #include <frc/controller/SimpleMotorFeedforward.h>
 #include <frc/controller/HolonomicDriveController.h>
 

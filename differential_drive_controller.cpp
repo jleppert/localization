@@ -18,6 +18,7 @@
 #include <frc/MathUtil.h>
 
 #include <frc/controller/PIDController.h>
+#include <frc/controller/ProfiledPIDController.h>
 #include <frc/controller/SimpleMotorFeedforward.h>
 
 #include <frc/controller/RamseteController.h>
@@ -127,6 +128,10 @@ units::radian_t poseToleranceTheta;
 units::unit_t<b_unit> ramseteControllerB;
 units::unit_t<zeta_unit> ramseteControllerZeta;
 
+double thetaControllerP;
+double thetaControllerI;
+double thetaControllerD;
+
 double frontLeftWheelControllerP = 1.0;
 double frontLeftWheelControllerI = 0.0;
 double frontLeftWheelControllerD = 0.0;
@@ -152,12 +157,15 @@ int16_t maxWheelVoltage = 30000;
 
 frc::DifferentialDriveKinematics* driveKinematics;
 frc::RamseteController* controller;
+frc::ProfiledPIDController<units::radian>* thetaController;
 frc::DifferentialDriveOdometry* driveOdometry;
 
 frc2::PIDController* frontLeftWheelController;
 frc2::PIDController* frontRightWheelController;
 frc2::PIDController* backLeftWheelController;
 frc2::PIDController* backRightWheelController;
+
+frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
 
 frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
 
@@ -169,6 +177,19 @@ units::meters_per_second_squared_t scanPatternMaxAcceleration;
 
 frc::Trajectory activeTrajectory;
 std::string activeTrajectoryJSONString;
+
+frc::DifferentialDriveWheelSpeeds targetWheelSpeeds;
+frc::ChassisSpeeds targetChassisSpeeds;
+
+units::volt_t frontLeftFeedforward;
+units::volt_t frontRightFeedforward;
+units::volt_t backLeftFeedforward;
+units::volt_t backRightFeedforward;
+
+double frontLeftOutput;
+double frontRightOutput;
+double backLeftOutput;
+double backRightOutput;
 
 sw::redis::Subscriber* subscriber;
 
@@ -674,6 +695,10 @@ struct WheelVelocityMessage {
   MSGPACK_DEFINE_MAP(timestamp, velocity)
 };
 
+double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFeedforward) {
+  return (wheelControllerOutput + wheelFeedforward.value()) * maxWheelVoltage;
+}
+
 double rpmToVelocity(int16_t rpm) {
   return ((double(rpm) / 60) * (M_PI * 2) * (wheelDiameter.value() / 2));
 }
@@ -746,6 +771,62 @@ frc::Rotation2d quatToRotation2d(PoseMessage poseMessage) {
   return rotation;
 }
 
+WheelStatusMessage getCurrentWheelStatus() {
+  auto wheelStatus = redis->get(WHEEL_STATUS_KEY);
+
+  string s = *wheelStatus;
+  msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+
+  msgpack::object deserialized = oh.get();
+
+  WheelStatusMessage wheelMessage;
+  deserialized.convert(wheelMessage);
+
+  return wheelMessage;
+}
+
+/*frc::DifferentialDriveWheelSpeeds chassisSpeedsToWheelSpeeds(double xSpeed, double zRotation, bool squareInputs = false) {
+  xSpeed = std::clamp(xSpeed, -1.0, 1.0);
+  zRotation = std::clamp(zRotation, -1.0, 1.0);
+
+  // for fine control
+  if (squareInputs) {
+    xSpeed = std::copysign(xSpeed * xSpeed, xSpeed);
+    zRotation = std::copysign(zRotation * zRotation, zRotation);
+  }
+
+  double leftSpeed;
+  double rightSpeed;
+
+  double maxInput = std::copysign(std::max(std::abs(xSpeed), std::abs(zRotation)), xSpeed);
+
+  if (xSpeed >= 0.0) {
+    if (zRotation >= 0.0) {
+      leftSpeed = maxInput;
+      rightSpeed = xSpeed - zRotation;
+    } else {
+      leftSpeed = xSpeed + zRotation;
+      rightSpeed = maxInput;
+    }
+  } else {
+    if (zRotation >= 0.0) {
+      leftSpeed = xSpeed + zRotation;
+      rightSpeed = maxInput;
+    } else {
+      leftSpeed = maxInput;
+      rightSpeed = xSpeed - zRotation;
+    }
+  }
+
+  double maxMagnitude = std::max(std::abs(leftSpeed), std::abs(rightSpeed));
+  if (maxMagnitude > 1.0) {
+    leftSpeed /= maxMagnitude;
+    rightSpeed /= maxMagnitude;
+  }
+
+  return frc::DifferentialDriveWheelSpeeds(leftSpeed, rightSpeed);
+}*/
+
 poseInfo getCurrentPose() {
   auto localizedPose = redis->get(POSE_DATA_KEY);
   auto odometryPose = redis->get(POSE_WHEEL_ODOMETRY_KEY);
@@ -807,18 +888,90 @@ poseInfo getCurrentPose() {
   return p;
 }
 
-WheelStatusMessage getCurrentWheelStatus() {
-  auto wheelStatus = redis->get(WHEEL_STATUS_KEY);
+frc::Rotation2d normalizeHeading(frc::Rotation2d heading) {
+  double radians = heading.Radians().value();
 
-  string s = *wheelStatus;
-  msgpack::object_handle oh = msgpack::unpack(s.data(), s.size());
+  while (radians > M_PI) {
+    radians -= 2 * M_PI;
+  }
 
-  msgpack::object deserialized = oh.get();
+  while(radians < -M_PI) {
+    radians += 2 * M_PI;
+  }
 
-  WheelStatusMessage wheelMessage;
-  deserialized.convert(wheelMessage);
+  return frc::Rotation2d(units::radian_t(radians));
+}
 
-  return wheelMessage;
+void rotateToHeading(frc::Rotation2d heading) {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+ 
+  poseInfo startingPose = getCurrentPose(); 
+
+  thetaController->Reset(startingPose.pose.Rotation().Radians());
+
+  frc::Rotation2d rotationError = heading - startingPose.pose.Rotation();
+
+  bool headingReached = false;
+  while(true) {
+    timer.waitForNextLoop();
+
+    poseInfo currentPose = getCurrentPose(); 
+    rotationError = heading - currentPose.pose.Rotation();
+
+    std::cout << "error: " << rotationError.Radians().value() << ", tolerance: " << poseToleranceTheta.value() << std::endl;
+    if(units::math::abs(rotationError.Radians()) < poseToleranceTheta) {
+      break;
+    }
+
+    units::radians_per_second_t thetaFF = units::radians_per_second_t(thetaController->Calculate(
+      currentPose.pose.Rotation().Radians(), heading.Radians()));
+
+    rotationError = heading - currentPose.pose.Rotation();
+
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    frc::ChassisSpeeds targetChassisSpeeds = frc::ChassisSpeeds{
+      units::meters_per_second_t(0.0), 
+      units::meters_per_second_t(0.0), 
+      thetaFF
+    };
+    
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+    
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    
+    WheelVoltageMessage message = {
+      uint64_t(currentMicro - startupTimestamp),
+
+      {
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+      }
+    };
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+  }
+
+  stopWheels();
 }
 
 ParametersMessage lastParametersMessage;
@@ -901,6 +1054,28 @@ void updateParameters(ParametersMessage parametersMessage) {
   }
 
   wheelMotorFeedforward = new frc::SimpleMotorFeedforward<units::meter>(units::volt_t (wheelMotorFeedforwardkS), units::volt_t(wheelMotorFeedforwardkV) / 1_mps, units::volt_t(wheelMotorFeedforwardkA) / 1_mps_sq);
+
+  thetaControllerP = parametersMessage.thetaControllerP;
+  thetaControllerI = parametersMessage.thetaControllerI;
+  thetaControllerD = parametersMessage.thetaControllerD;
+
+  if(thetaConstraints == NULL) {
+    thetaConstraints = new frc::TrapezoidProfile<units::radian>::Constraints(maxAngularVelocity, maxAngularAcceleration);
+  } else {
+    thetaConstraints->maxVelocity = maxAngularVelocity;
+    thetaConstraints->maxAcceleration = maxAngularAcceleration;
+  }
+
+  if(thetaController == NULL) {
+    thetaController = new frc::ProfiledPIDController<units::radian>(
+      thetaControllerP,
+      thetaControllerI,
+      thetaControllerD,
+      *thetaConstraints
+    );
+  } else {
+    thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
+  }
 
   if(controller == NULL) {
     controller = new frc::RamseteController(ramseteControllerB, ramseteControllerZeta);
@@ -1297,24 +1472,6 @@ commandTypes getCommandType(std::string const& commandType) {
   return UNKNOWN_COMMAND;
 }
 
-double normalizeMotorVoltage(double wheelControllerOutput, units::volt_t wheelFeedforward) {
-
-  return (wheelControllerOutput + wheelFeedforward.value()) * maxWheelVoltage;
-}
-
-frc::DifferentialDriveWheelSpeeds targetWheelSpeeds;
-frc::ChassisSpeeds targetChassisSpeeds;
-
-units::volt_t frontLeftFeedforward;
-units::volt_t frontRightFeedforward;
-units::volt_t backLeftFeedforward;
-units::volt_t backRightFeedforward;
-
-double frontLeftOutput;
-double frontRightOutput;
-double backLeftOutput;
-double backRightOutput;
-
 void runActiveTrajectory() {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -1444,48 +1601,28 @@ void runActiveTrajectory() {
   stopWheels();
 }
 
-void rotateToHeading(frc::Rotation2d heading) {
-  float leftSpeed = -0.5;
-  float rightSpeed = 0.5;
-  
-  frc::DifferentialDriveWheelSpeeds wheelSpeeds = frc::DifferentialDriveWheelSpeeds{
-    units::meters_per_second_t(leftSpeed),
-    units::meters_per_second_t(rightSpeed)
-  };
-
-  auto backFeedforward   = wheelMotorFeedforward->Calculate(wheelSpeeds.left);
-  auto rightFeedforward  = wheelMotorFeedforward->Calculate(wheelSpeeds.right);
-
-  WheelStatusMessage wheelStatus = getCurrentWheelStatus();
-
-  double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  wheelSpeeds.right.value());
-  double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  wheelSpeeds.left.value());
-  
-  int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-  WheelVoltageMessage message = {
-        uint64_t(currentMicro - startupTimestamp),
-        
-        {
-          int16_t (normalizeMotorVoltage(rightOutput, backRightFeedforward)),
-          int16_t (normalizeMotorVoltage(rightOutput, frontRightFeedforward)),
-          int16_t (normalizeMotorVoltage(leftOutput, frontLeftFeedforward)),
-          int16_t (normalizeMotorVoltage(leftOutput, backLeftFeedforward))
-        }
-      };
-
-      std::stringstream packed;
-      msgpack::pack(packed, message);
-
-      packed.seekg(0);
-      
-      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
-
-}
-
 double lastCalibrationRun = 0.5;
+
+bool firstRun = true;
+
+frc::Rotation2d lastHeading = frc::Rotation2d(0_deg);
 void runCalibration() {
   
-  rotateToHeading(frc::Rotation2d(0_deg));
+  if(firstRun == true) {
+    rotateToHeading(frc::Rotation2d(0_deg));
+    firstRun = false;
+
+    return;
+  }
+
+  poseInfo currentPose = getCurrentPose();
+
+  frc::Rotation2d heading = lastHeading + frc::Rotation2d(45_deg);
+  std::cout << heading.Degrees().value() << std::endl;
+  
+  rotateToHeading(heading);
+
+  lastHeading = heading;
   return; 
   
   LoopTimer timer;
