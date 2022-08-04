@@ -888,20 +888,6 @@ poseInfo getCurrentPose() {
   return p;
 }
 
-frc::Rotation2d normalizeHeading(frc::Rotation2d heading) {
-  double radians = heading.Radians().value();
-
-  while (radians > M_PI) {
-    radians -= 2 * M_PI;
-  }
-
-  while(radians < -M_PI) {
-    radians += 2 * M_PI;
-  }
-
-  return frc::Rotation2d(units::radian_t(radians));
-}
-
 void rotateToHeading(frc::Rotation2d heading) {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -913,6 +899,9 @@ void rotateToHeading(frc::Rotation2d heading) {
 
   frc::Rotation2d rotationError = heading - startingPose.pose.Rotation();
 
+  std::cout << "heading: " << heading.Degrees().value() << ", " << heading.Radians().value() << std::endl;
+  std::cout << "rotation Error: " << rotationError.Degrees().value() << ", " << rotationError.Radians().value() << std::endl;
+  
   bool headingReached = false;
   while(true) {
     timer.waitForNextLoop();
@@ -921,7 +910,7 @@ void rotateToHeading(frc::Rotation2d heading) {
     rotationError = heading - currentPose.pose.Rotation();
 
     std::cout << "error: " << rotationError.Radians().value() << ", tolerance: " << poseToleranceTheta.value() << std::endl;
-    if(units::math::abs(rotationError.Radians()) < poseToleranceTheta) {
+    if(thetaController->AtGoal()) {
       break;
     }
 
@@ -1073,8 +1062,12 @@ void updateParameters(ParametersMessage parametersMessage) {
       thetaControllerD,
       *thetaConstraints
     );
+
+    thetaController->EnableContinuousInput(-180_deg, 180_deg);
+    thetaController->SetTolerance(frc::Rotation2d(poseToleranceTheta).Radians());
   } else {
     thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
+    thetaController->SetTolerance(frc::Rotation2d(poseToleranceTheta).Radians());
   }
 
   if(controller == NULL) {
@@ -1617,7 +1610,7 @@ void runCalibration() {
 
   poseInfo currentPose = getCurrentPose();
 
-  frc::Rotation2d heading = lastHeading + frc::Rotation2d(45_deg);
+  frc::Rotation2d heading = lastHeading.RotateBy(frc::Rotation2d(45_deg));
   std::cout << heading.Degrees().value() << std::endl;
   
   rotateToHeading(heading);
