@@ -893,17 +893,74 @@ poseInfo getCurrentPose() {
   return p;
 }
 
-void runProfile() {
+void runProfile(frc::Translation2d xPosition) {
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
  
   poseInfo startingPose = getCurrentPose(); 
 
+  xController->Reset(startingPose.pose.Translation().X());
 
+  frc::Translation2d xError = xPosition - frc::Translation2d(startingPose.pose.Translation().X(), 0_m);
+  
+  std::cout << "xPosition: " << xPosition.X().value() << std::endl;
+  std::cout << "xPosition Error: " << xError.X().value() << std::endl;
+  
+  while(true) {
+    timer.waitForNextLoop();
 
+    poseInfo currentPose = getCurrentPose(); 
+    xError = xPosition - frc::Translation2d(currentPose.pose.Translation().X(), 0_m);
+    
+    std::cout << "error: " << xError.X().value() << ", tolerance: " << poseToleranceX.value() << std::endl;
+    if(xController->AtGoal()) {
+      break;
+    }
 
+    units::meters_per_second_t xFF = units::meters_per_second_t(xController->Calculate(
+      currentPose.pose.Translation().X(), xPosition.X()));
 
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    frc::ChassisSpeeds targetChassisSpeeds = frc::ChassisSpeeds{
+      xFF, 
+      units::meters_per_second_t(0.0), 
+      0_rad_per_s
+    };
+    
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+    
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    
+    WheelVoltageMessage message = {
+      uint64_t(currentMicro - startupTimestamp),
+
+      {
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+      }
+    };
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+  }
 }
 
 void rotateToHeading(frc::Rotation2d heading) {
@@ -920,7 +977,6 @@ void rotateToHeading(frc::Rotation2d heading) {
   std::cout << "heading: " << heading.Degrees().value() << ", " << heading.Radians().value() << std::endl;
   std::cout << "rotation Error: " << rotationError.Degrees().value() << ", " << rotationError.Radians().value() << std::endl;
   
-  bool headingReached = false;
   while(true) {
     timer.waitForNextLoop();
 
@@ -934,8 +990,6 @@ void rotateToHeading(frc::Rotation2d heading) {
 
     units::radians_per_second_t thetaFF = units::radians_per_second_t(thetaController->Calculate(
       currentPose.pose.Rotation().Radians(), heading.Radians()));
-
-    rotationError = heading - currentPose.pose.Rotation();
 
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
 
