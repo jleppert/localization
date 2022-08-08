@@ -893,7 +893,7 @@ poseInfo getCurrentPose() {
   return p;
 }
 
-void runProfile(frc::Translation2d xPosition) {
+void runProfile(frc::Translation2d xPosition, frc::Rotation2d heading = frc::Rotation2d(0_rad)) {
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
@@ -906,6 +906,13 @@ void runProfile(frc::Translation2d xPosition) {
   
   std::cout << "xPosition: " << xPosition.X().value() << std::endl;
   std::cout << "xPosition Error: " << xError.X().value() << std::endl;
+
+  thetaController->Reset(startingPose.pose.Rotation().Radians());
+
+  frc::Rotation2d rotationError = heading - startingPose.pose.Rotation();
+
+  std::cout << "heading: " << heading.Degrees().value() << ", " << heading.Radians().value() << std::endl;
+  std::cout << "rotation Error: " << rotationError.Degrees().value() << ", " << rotationError.Radians().value() << std::endl;
   
   while(true) {
     timer.waitForNextLoop();
@@ -913,7 +920,10 @@ void runProfile(frc::Translation2d xPosition) {
     poseInfo currentPose = getCurrentPose(); 
     xError = xPosition - frc::Translation2d(currentPose.pose.Translation().X(), 0_m);
     
-    std::cout << "error: " << xError.X().value() << ", tolerance: " << poseToleranceX.value() << std::endl;
+    rotationError = heading - currentPose.pose.Rotation();
+    std::cout << "theta error: " << rotationError.Radians().value() << ", theta tolerance: " << poseToleranceTheta.value() << std::endl;
+
+    std::cout << "x error: " << xError.X().value() << ", x tolerance: " << poseToleranceX.value() << std::endl;
     if(xController->AtGoal()) {
       break;
     }
@@ -921,12 +931,15 @@ void runProfile(frc::Translation2d xPosition) {
     units::meters_per_second_t xFF = units::meters_per_second_t(xController->Calculate(
       currentPose.pose.Translation().X(), xPosition.X()));
 
+    units::radians_per_second_t thetaFF = units::radians_per_second_t(thetaController->Calculate(
+      currentPose.pose.Rotation().Radians(), heading.Radians()));
+
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
 
     frc::ChassisSpeeds targetChassisSpeeds = frc::ChassisSpeeds{
       xFF, 
       units::meters_per_second_t(0.0), 
-      0_rad_per_s
+      thetaFF
     };
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
@@ -961,6 +974,8 @@ void runProfile(frc::Translation2d xPosition) {
 
     redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
   }
+
+  stopWheels();
 }
 
 void rotateToHeading(frc::Rotation2d heading) {
@@ -1696,7 +1711,18 @@ bool firstRun = true;
 
 frc::Rotation2d lastHeading = frc::Rotation2d(0_deg);
 void runCalibration() {
+  if(firstRun) {
+    rotateToHeading(frc::Rotation2d(0_deg));
+    runProfile(frc::Translation2d(0_m, 0_m));
+    firstRun = false;
+    return;
+  }
   
+  rotateToHeading(frc::Rotation2d(0_deg));
+  runProfile(frc::Translation2d(units::meter_t(lastCalibrationRun), 0_m));
+
+  lastCalibrationRun = lastCalibrationRun * -1;
+  /* 
   if(firstRun == true) {
     rotateToHeading(frc::Rotation2d(0_deg));
     firstRun = false;
@@ -1712,18 +1738,13 @@ void runCalibration() {
   rotateToHeading(heading);
 
   lastHeading = heading;
+  return; */
   return; 
-  
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
 
   poseInfo startingPose = getCurrentPose();
-
-  frc::TrapezoidProfile<units::meters> profile{
-    frc::TrapezoidProfile<units::meters>::Constraints{0.5_mps, 0.2_mps_sq},
-    frc::TrapezoidProfile<units::meters>::State{units::meter_t(lastCalibrationRun), 0_mps},
-    frc::TrapezoidProfile<units::meters>::State{startingPose.odometryPose.Translation().X(), 0_mps}};
 
   frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.1_mps, 0.3_mps_sq);
   trajectoryConfig.SetKinematics(*driveKinematics);
