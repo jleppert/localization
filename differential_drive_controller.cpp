@@ -118,7 +118,6 @@ int wheelOdometryUpdateRate;
 double maxXPosition;
 double maxYPosition;
 
-units::meter_t linearTolerance;
 units::radian_t angularTolerance;
 
 units::meter_t poseToleranceX;
@@ -131,6 +130,10 @@ units::unit_t<zeta_unit> ramseteControllerZeta;
 double thetaControllerP;
 double thetaControllerI;
 double thetaControllerD;
+
+double xControllerP;
+double xControllerI;
+double xControllerD;
 
 double frontLeftWheelControllerP = 1.0;
 double frontLeftWheelControllerI = 0.0;
@@ -157,6 +160,8 @@ int16_t maxWheelVoltage = 30000;
 
 frc::DifferentialDriveKinematics* driveKinematics;
 frc::RamseteController* controller;
+
+frc::ProfiledPIDController<units::meter>* xController;
 frc::ProfiledPIDController<units::radian>* thetaController;
 frc::DifferentialDriveOdometry* driveOdometry;
 
@@ -166,6 +171,7 @@ frc2::PIDController* backLeftWheelController;
 frc2::PIDController* backRightWheelController;
 
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
+frc::TrapezoidProfile<units::meter>::Constraints* xConstraints;
 
 frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
 
@@ -623,7 +629,6 @@ struct ParametersMessage {
     maxXPosition,
     maxYPosition,
 
-    linearTolerance,
     angularTolerance,
 
     poseToleranceX,
@@ -888,6 +893,19 @@ poseInfo getCurrentPose() {
   return p;
 }
 
+void runProfile() {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+ 
+  poseInfo startingPose = getCurrentPose(); 
+
+
+
+
+
+}
+
 void rotateToHeading(frc::Rotation2d heading) {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -977,7 +995,6 @@ void updateParameters(ParametersMessage parametersMessage) {
   wheelBase =  units::meter_t (parametersMessage.wheelBase);
   wheelDiameter = units::meter_t (parametersMessage.wheelDiameter);
 
-  linearTolerance = units::meter_t (parametersMessage.linearTolerance);
   angularTolerance = units::radian_t (parametersMessage.angularTolerance);
 
   poseToleranceX = units::meter_t (parametersMessage.poseToleranceX);
@@ -1068,6 +1085,31 @@ void updateParameters(ParametersMessage parametersMessage) {
   } else {
     thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
     thetaController->SetTolerance(frc::Rotation2d(poseToleranceTheta).Radians());
+  }
+
+  if(xConstraints == NULL) {
+    xConstraints = new frc::TrapezoidProfile<units::meter>::Constraints(maxVelocity, maxAcceleration);
+  } else {
+    xConstraints->maxVelocity = maxVelocity;
+    xConstraints->maxAcceleration = maxAcceleration;
+  }
+
+  xControllerP = parametersMessage.xControllerP;
+  xControllerI = parametersMessage.xControllerI;
+  xControllerD = parametersMessage.xControllerD;
+
+  if(xController == NULL) {
+    xController = new frc::ProfiledPIDController<units::meter>(
+      xControllerP,
+      xControllerI,
+      xControllerD,
+      *xConstraints
+    );
+
+    xController->SetTolerance(poseToleranceX);
+  } else {
+    xController->SetPID(xControllerP, xControllerI, xControllerD);
+    xController->SetTolerance(poseToleranceX);
   }
 
   if(controller == NULL) {
