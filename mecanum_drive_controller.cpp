@@ -273,6 +273,7 @@ struct ControllerStateMessage {
 
     FLT _velocityX,
     FLT _velocityY,
+    FLT _velocityTheta,
 
     double _xPositionError,
     double _xVelocityError,
@@ -331,6 +332,7 @@ struct ControllerStateMessage {
 
     velocityX = _velocityX;
     velocityY = _velocityY;
+    velocityTheta = _velocityTheta;
 
     xPositionError = _xPositionError;
     xVelocityError = _xVelocityError;
@@ -399,6 +401,7 @@ struct ControllerStateMessage {
 
   FLT velocityX = 0;
   FLT velocityY = 0;
+  FLT velocityTheta = 0;
 
   double xPositionError = 0;
   double xVelocityError = 0;
@@ -467,6 +470,7 @@ struct ControllerStateMessage {
 
     velocityX,
     velocityY,
+    velocityTheta,
 
     xPositionError,
     xVelocityError,
@@ -783,7 +787,6 @@ poseInfo getCurrentPose() {
 
     msgpack::object deserializedV = ohV.get();
 
-    VelocityMessage velocityMessage;
     deserializedV.convert(velocityMessage);
   }
 
@@ -1252,6 +1255,7 @@ void publishControlState(
 
   FLT velocityX = currentPose.messageVelocity.pos[0];
   FLT velocityY = currentPose.messageVelocity.pos[1];
+  FLT velocityTheta = currentPose.messageVelocity.theta[2];
 
   ControllerStateMessage message = {
     timestamp,
@@ -1261,6 +1265,7 @@ void publishControlState(
 
     velocityX,
     velocityY,
+    velocityTheta,
 
     xPositionError,    
     xVelocityError,

@@ -294,6 +294,7 @@ struct ControllerStateMessage {
 
     FLT _velocityX,
     FLT _velocityY,
+    FLT _velocityTheta,
 
     double _xPositionError,
     double _xVelocityError,
@@ -352,6 +353,7 @@ struct ControllerStateMessage {
 
     velocityX = _velocityX;
     velocityY = _velocityY;
+    velocityTheta = _velocityTheta;
 
     xPositionError = _xPositionError;
     xVelocityError = _xVelocityError;
@@ -420,6 +422,7 @@ struct ControllerStateMessage {
 
   FLT velocityX = 0;
   FLT velocityY = 0;
+  FLT velocityTheta = 0;
 
   double xPositionError = 0;
   double xVelocityError = 0;
@@ -488,6 +491,7 @@ struct ControllerStateMessage {
 
     velocityX,
     velocityY,
+    velocityTheta,
 
     xPositionError,
     xVelocityError,
@@ -855,7 +859,6 @@ poseInfo getCurrentPose() {
     // wheel odometry pose
     string sO = *odometryPose;
     msgpack::object_handle ohS = msgpack::unpack(sO.data(), sO.size());
-
     msgpack::object deserializedO = ohS.get();
 
     deserializedO.convert(odometryPoseMessage);
@@ -869,7 +872,6 @@ poseInfo getCurrentPose() {
 
     msgpack::object deserializedV = ohV.get();
 
-    VelocityMessage velocityMessage;
     deserializedV.convert(velocityMessage);
   }
 
@@ -940,7 +942,7 @@ void runProfile(frc::Translation2d xPosition, frc::Rotation2d heading = frc::Rot
 
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
 
-    frc::ChassisSpeeds targetChassisSpeeds = frc::ChassisSpeeds{
+    targetChassisSpeeds = frc::ChassisSpeeds{
       xFF, 
       units::meters_per_second_t(0.0), 
       thetaFF
@@ -1014,7 +1016,7 @@ void rotateToHeading(frc::Rotation2d heading) {
 
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
 
-    frc::ChassisSpeeds targetChassisSpeeds = frc::ChassisSpeeds{
+    targetChassisSpeeds = frc::ChassisSpeeds{
       units::meters_per_second_t(0.0), 
       units::meters_per_second_t(0.0), 
       thetaFF
@@ -1441,6 +1443,18 @@ void publishControlState(
 
   bool atPoseReference = controller->AtReference();
 
+  frc::ProfiledPIDController<units::meter>::Distance_t xPositionError = xController->GetPositionError();
+  frc::ProfiledPIDController<units::meter>::Velocity_t xVelocityError = xController->GetVelocityError();
+
+  frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
+  frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
+
+  frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
+  frc::ProfiledPIDController<units::meter>::State xState = xController->GetSetpoint(); 
+  
+  bool xAtSetpoint = xController->AtSetpoint();
+  bool thetaAtSetpoint = thetaController->AtSetpoint();
+
   frc::Pose2d poseError = controller->getPoseError();
 
   double targetChassisVelocityX = targetChassisSpeeds.vx.value();
@@ -1465,6 +1479,7 @@ void publishControlState(
 
   FLT velocityX = currentPose.messageVelocity.pos[0];
   FLT velocityY = currentPose.messageVelocity.pos[1];
+  FLT velocityTheta = currentPose.messageVelocity.theta[2];
 
   ControllerStateMessage message = {
     timestamp,
@@ -1474,30 +1489,31 @@ void publishControlState(
 
     velocityX,
     velocityY,
+    velocityTheta,
 
-    0.0,    
-    0.0,
+    double (xPositionError),    
+    double (xVelocityError),
 
-    0.0,
-    0.0,
+    0.0, // no control in Y
+    0.0, // no control in Y
 
-    0.0,
-    0.0,
+    double (thetaPositionError),
+    double (thetaVelocityError),
 
-    0.0,
-    0.0,
-    0.0,
+    double (xState.position),
+    0.0, // no control in Y
+    double (thetaState.position),
 
-    false,
-    false,
-    false,
+    xAtSetpoint,
+    false, // no control in Y
+    thetaAtSetpoint,
 
     atPoseReference,
 
     double (poseError.X()),
     double (poseError.Y()),
 
-    0.0,
+    0.0, // TODO: controller pose rotation error
 
     wheelFrontLeftVelocityError,
     wheelFrontRightVelocityError,
@@ -1716,6 +1732,11 @@ double lastCalibrationRun = 0.5;
 bool firstRun = true;
 
 frc::Rotation2d lastHeading = frc::Rotation2d(0_deg);
+
+
+// 0,0
+// -0.5, 0.0,
+// -0.2, 
 void runCalibration() {
   if(firstRun) {
     rotateToHeading(frc::Rotation2d(0_deg));
@@ -1724,11 +1745,11 @@ void runCalibration() {
     return;
   }
   
-  rotateToHeading(frc::Rotation2d(0_deg));
+  /*rotateToHeading(frc::Rotation2d(0_deg));
   runProfile(frc::Translation2d(units::meter_t(lastCalibrationRun), 0_m));
 
   lastCalibrationRun = lastCalibrationRun * -1;
-  /* 
+  
   if(firstRun == true) {
     rotateToHeading(frc::Rotation2d(0_deg));
     firstRun = false;
@@ -1745,23 +1766,37 @@ void runCalibration() {
 
   lastHeading = heading;
   return; */
-  return; 
+  //return; 
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
 
   poseInfo startingPose = getCurrentPose();
 
-  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(0.1_mps, 0.3_mps_sq);
+  frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(maxVelocity, maxAcceleration);
   trajectoryConfig.SetKinematics(*driveKinematics);
 
-  if(lastCalibrationRun < 0) trajectoryConfig.SetReversed(true);
+  trajectoryConfig.SetReversed(true);
 
-  frc::Pose2d endingPose = frc::Pose2d(units::meter_t(lastCalibrationRun), 0_m, frc::Rotation2d(0_rad));
-  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.pose, endingPose}, trajectoryConfig);
+  frc::Pose2d endingPose = frc::Pose2d(0_m, 0_m, frc::Rotation2d(0_rad));
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(startingPose.pose, {
+    frc::Translation2d(0.0009770981897970765_m, -0.0008856590757978511_m),
+    frc::Translation2d(-0.19932803071859573_m, 0.19261557900197174_m),
+    frc::Translation2d(-0.3996331596269885_m, 0.20043381084349782_m),
+    frc::Translation2d(-0.5032055677454745_m, 0.011818967666682001_m),
+    frc::Translation2d(-0.41233543609434997_m, -0.14552294814402966_m),
+    frc::Translation2d(-0.19835093252879865_m, -0.15431845896574647_m),
+    frc::Translation2d(0.18857995063082833_m, 0.18870646308120875_m),
+    frc::Translation2d(0.40256445419637954_m, 0.19652469492273478_m),
+    frc::Translation2d(0.49832007679648926_m, 0.004978014805346653_m),
+    frc::Translation2d(0.38790798134942395_m, -0.1406365532430759_m),
+    frc::Translation2d(0.19248834339001641_m, -0.1435683901836482_m),
+    frc::Translation2d(0.0029312945693911185_m, -0.003817496016370159_m)  
+  }, startingPose.pose, trajectoryConfig);
   
   profileActiveTrajectory();
 
+  //return;
   bool profileComplete = false; 
   while(keepRunning && !profileComplete) {
     timer.waitForNextLoop();
@@ -1798,13 +1833,13 @@ void runCalibration() {
 
       // 1 - back right, 2 - front right, 3 - front left, 4 - back left
 
-      //frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
-      //frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
-      //backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
-      //backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+      frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
+      frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
+      backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
+      backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
 
-      double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  targetWheelSpeeds.right.value());
-      double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  targetWheelSpeeds.left.value());
+      //double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  targetWheelSpeeds.right.value());
+      //double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  targetWheelSpeeds.left.value());
 
 
       // wheel data is
@@ -1817,10 +1852,10 @@ void runCalibration() {
         uint64_t(currentMicro - startupTimestamp),
         
         {
-          int16_t (normalizeMotorVoltage(rightOutput, backRightFeedforward)),
-          int16_t (normalizeMotorVoltage(rightOutput, frontRightFeedforward)),
-          int16_t (normalizeMotorVoltage(leftOutput, frontLeftFeedforward)),
-          int16_t (normalizeMotorVoltage(leftOutput, backLeftFeedforward))
+          int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+          int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+          int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+          int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
         }
       };
 
