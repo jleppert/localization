@@ -197,6 +197,8 @@ double frontRightOutput;
 double backLeftOutput;
 double backRightOutput;
 
+frc::Rotation2d rotationOffset;
+
 sw::redis::Subscriber* subscriber;
 
 struct RadarDataLineMessage {
@@ -897,6 +899,8 @@ void runProfile(frc::Translation2d xPosition, frc::Rotation2d heading = frc::Rot
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
+
+  heading = heading + rotationOffset;
  
   poseInfo startingPose = getCurrentPose(); 
 
@@ -983,7 +987,9 @@ void rotateToHeading(frc::Rotation2d heading) {
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
  
-  poseInfo startingPose = getCurrentPose(); 
+  poseInfo startingPose = getCurrentPose();
+
+  heading = heading + rotationOffset;
 
   thetaController->Reset(startingPose.pose.Rotation().Radians());
 
@@ -2108,7 +2114,7 @@ void driveOdometryTask() {
   float tyre_deflection = 1;
 
   
-  frc::Rotation2d angleOffset = -(initialPose.pose.Rotation());
+  frc::Rotation2d angleOffset = initialPose.pose.Rotation();
   frc::Rotation2d lastAngle = frc::Rotation2d(0_rad);
 
   while(keepRunning) {
@@ -2255,6 +2261,10 @@ int main(int argc, char **argv) {
   poseInfo robotPose = getCurrentPose();
   
   auto waypoints = redis->get(TRAJECTORY_KEY);
+
+  poseInfo startingPose = getCurrentPose();
+  rotationOffset = startingPose.pose.Rotation();
+
 
   if(waypoints) {
     string waypointsString = *waypoints;
