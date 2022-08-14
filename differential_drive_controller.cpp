@@ -100,6 +100,7 @@ const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
 const string RUN_CALIBRATION_COMMAND_KEY = "RUN_CALIBRATION";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
 const string GOTO_HOME_LOCATION_COMMAND_KEY = "GOTO_HOME";
+const string SET_ORIGIN_COMMAND_KEY = "SET_ORIGIN";
 
 uint64_t startupTimestamp;
 
@@ -161,7 +162,7 @@ int16_t maxWheelVoltage = 30000;
 frc::DifferentialDriveKinematics* driveKinematics;
 frc::RamseteController* controller;
 
-frc::ProfiledPIDController<units::meter>* xController;
+frc2::PIDController* xController;
 frc::ProfiledPIDController<units::radian>* thetaController;
 frc::DifferentialDriveOdometry* driveOdometry;
 
@@ -171,7 +172,7 @@ frc2::PIDController* backLeftWheelController;
 frc2::PIDController* backRightWheelController;
 
 frc::TrapezoidProfile<units::radian>::Constraints* thetaConstraints;
-frc::TrapezoidProfile<units::meter>::Constraints* xConstraints;
+frc::TrapezoidProfile<units::meters>::Constraints* xConstraints;
 
 frc::SimpleMotorFeedforward<units::meter>* wheelMotorFeedforward;
 
@@ -241,7 +242,7 @@ struct PoseMessage {
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
   FLT radians = 0.0;
 
-  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot, radians)
 };
 
 PoseMessage poseMessageFromPose2d(uint64_t timestamp, FLT trackerTimestamp, frc::Pose2d pose) {
@@ -883,6 +884,8 @@ poseInfo getCurrentPose() {
     localizedHeading
   );
 
+  //std::cout << localizedHeading.Degrees().value() << std::endl;
+
   // odometry
   frc::Rotation2d odometryHeading = quatToRotation2d(odometryPoseMessage);
   frc::Pose2d odometryPose2d = frc::Pose2d(
@@ -895,93 +898,6 @@ poseInfo getCurrentPose() {
   poseInfo p = { localizedPoseMessage, velocityMessage, localizedPose2d, odometryPose2d };
 
   return p;
-}
-
-void runProfile(frc::Translation2d xPosition, frc::Rotation2d heading = frc::Rotation2d(0_rad)) {
-  LoopTimer timer;
-	timer.initializeTimer();
-	timer.setLoopFrequency(controllerUpdateRate);
-
-  heading = heading + rotationOffset;
- 
-  poseInfo startingPose = getCurrentPose(); 
-
-  xController->Reset(startingPose.pose.Translation().X());
-
-  frc::Translation2d xError = xPosition - frc::Translation2d(startingPose.pose.Translation().X(), 0_m);
-  
-  std::cout << "xPosition: " << xPosition.X().value() << std::endl;
-  std::cout << "xPosition Error: " << xError.X().value() << std::endl;
-
-  thetaController->Reset(startingPose.pose.Rotation().Radians());
-
-  frc::Rotation2d rotationError = heading - startingPose.pose.Rotation();
-
-  std::cout << "heading: " << heading.Degrees().value() << ", " << heading.Radians().value() << std::endl;
-  std::cout << "rotation Error: " << rotationError.Degrees().value() << ", " << rotationError.Radians().value() << std::endl;
-  
-  while(true) {
-    timer.waitForNextLoop();
-
-    poseInfo currentPose = getCurrentPose(); 
-    xError = xPosition - frc::Translation2d(currentPose.pose.Translation().X(), 0_m);
-    
-    rotationError = heading - currentPose.pose.Rotation();
-    std::cout << "theta error: " << rotationError.Radians().value() << ", theta tolerance: " << poseToleranceTheta.value() << std::endl;
-
-    std::cout << "x error: " << xError.X().value() << ", x tolerance: " << poseToleranceX.value() << std::endl;
-    if(xController->AtGoal()) {
-      break;
-    }
-
-    units::meters_per_second_t xFF = units::meters_per_second_t(xController->Calculate(
-      currentPose.pose.Translation().X(), xPosition.X()));
-
-    units::radians_per_second_t thetaFF = units::radians_per_second_t(thetaController->Calculate(
-      currentPose.pose.Rotation().Radians(), heading.Radians()));
-
-    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
-
-    targetChassisSpeeds = frc::ChassisSpeeds{
-      xFF, 
-      units::meters_per_second_t(0.0), 
-      thetaFF
-    };
-    
-    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
-
-    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-
-    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
-    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
-    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
-    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
-    
-    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-    
-    WheelVoltageMessage message = {
-      uint64_t(currentMicro - startupTimestamp),
-
-      {
-        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
-        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
-        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
-        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
-      }
-    };
-
-    std::stringstream packed;
-    msgpack::pack(packed, message);
-
-    packed.seekg(0);
-
-    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
-  }
-
-  stopWheels();
 }
 
 void rotateToHeading(frc::Rotation2d heading) {
@@ -1022,6 +938,8 @@ void rotateToHeading(frc::Rotation2d heading) {
       thetaFF
     };
     
+    std::cout << "thetaFF: " << thetaFF.value() << std::endl;
+
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
     frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
@@ -1047,12 +965,138 @@ void rotateToHeading(frc::Rotation2d heading) {
       }
     };
 
+    std::cout << "here2" << std::endl;
+
     std::stringstream packed;
     msgpack::pack(packed, message);
 
     packed.seekg(0);
 
     redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+  }
+
+  stopWheels();
+}
+
+void runProfile(frc::Translation2d position) {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  poseInfo startingPose = getCurrentPose(); 
+  xController->Reset();
+  
+  double angle = atan2(
+    position.Y().value() - startingPose.pose.Translation().Y().value(), 
+    position.X().value() - startingPose.pose.Translation().X().value()
+  );
+
+  frc::Rotation2d heading = frc::Rotation2d(units::radian_t(angle));
+
+  rotateToHeading(heading);
+
+  frc::Translation2d positionError = position - startingPose.pose.Translation();
+  
+  std::cout << "xPosition: " << position.X().value() << std::endl;
+  std::cout << "xPosition Error: " << positionError.X().value() << std::endl;
+
+  std::cout << "yPosition: " << position.Y().value() << std::endl;
+  std::cout << "yPosition Error: " << positionError.Y().value() << std::endl;
+  
+  thetaController->Reset(startingPose.pose.Rotation().Radians());
+
+  frc::Rotation2d rotationError = heading - startingPose.pose.Rotation();
+
+  std::cout << "heading: " << heading.Degrees().value() << ", " << heading.Radians().value() << std::endl;
+  std::cout << "rotation Error: " << rotationError.Degrees().value() << ", " << rotationError.Radians().value() << std::endl;
+
+  frc::TrapezoidProfile<units::meters> profile {
+    *xConstraints, 
+    {position.X(), 0_mps}, 
+    {startingPose.pose.Translation().X(), 0_mps}
+  };
+
+  std::cout << "total time: " << profile.TotalTime().value() << std::endl;
+  
+  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t deltaTime = 0;
+
+  while(units::second_t(deltaTime * 0.000001) < profile.TotalTime()) {
+    timer.waitForNextLoop();
+
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    deltaTime = (currentMicro - startTime);
+    
+    std::cout << "timer elapsed time: " << timer.elapsedTime() << " profile time: " << float(deltaTime * 0.000001) << std::endl;
+
+    poseInfo currentPose = getCurrentPose(); 
+
+    frc::TrapezoidProfile<units::meter>::State state = profile.Calculate(units::second_t (deltaTime * 0.000001));
+
+    units::meters_per_second_t xFeedback = units::meters_per_second_t(xController->Calculate(
+      currentPose.pose.Translation().X().value(), state.position.value()));
+
+    units::radians_per_second_t thetaFF = units::radians_per_second_t(thetaController->Calculate(
+      currentPose.pose.Rotation().Radians(), heading.Radians()));
+
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    //xFF = units::meters_per_second_t(std::copysign(xFF.value() * xFF.value(), xFF.value()));
+    //thetaFF = units::radians_per_second_t(std::copysign(thetaFF.value() * thetaFF.value(), thetaFF.value()));
+
+    std::cout << "state position, velocity: " << state.position.value() << ", " << state.velocity.value() << std::endl;
+    std::cout << "xFeedback: " << xFeedback.value() << std::endl;
+    std::cout << "thetaFF: " << thetaFF.value() << std::endl;
+
+    targetChassisSpeeds = frc::ChassisSpeeds::FromFieldRelativeSpeeds(
+      state.velocity + xFeedback,
+      units::meters_per_second_t(0.0),
+      0_rad_per_s, 
+      //thetaFF,
+      currentPose.pose.Rotation()
+    );
+
+    std::cout << "vx, vy, omega: " << targetChassisSpeeds.vx.value() << ", " << targetChassisSpeeds.vy.value() << ", " << targetChassisSpeeds.omega.value() << std::endl;
+    
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+
+    std::cout << "here" << std::endl;
+
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+    
+    std::cout << "here2" << std::endl;
+
+    WheelVoltageMessage message = {
+      uint64_t(currentMicro - startupTimestamp),
+
+      {
+        
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+      }
+    };
+
+    std::cout << "here3" << std::endl;
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+    
+    std::cout << "here4" << std::endl;
+
   }
 
   stopWheels();
@@ -1109,8 +1153,8 @@ void updateParameters(ParametersMessage parametersMessage) {
   minWheelVoltage = parametersMessage.minWheelVoltage;
   maxWheelVoltage = parametersMessage.maxWheelVoltage;
  
-  ramseteControllerB = units::unit_t<b_unit>(parametersMessage.ramseteControllerB);
-  ramseteControllerZeta = units::unit_t<zeta_unit>(parametersMessage.ramseteControllerZeta);
+  ramseteControllerB = units::unit_t<b_unit>(parametersMessage.ramseteControllerB * 1_rad * 1_rad / (1_m * 1_m));
+  ramseteControllerZeta = units::unit_t<zeta_unit>(parametersMessage.ramseteControllerZeta / 1_rad);
 
   if(frontLeftWheelController == NULL) {
     frontLeftWheelController = new frc2::PIDController(frontLeftWheelControllerP, frontLeftWheelControllerI, frontLeftWheelControllerD, units::second_t (1 / controllerUpdateRate));
@@ -1162,10 +1206,11 @@ void updateParameters(ParametersMessage parametersMessage) {
   } else {
     thetaController->SetPID(thetaControllerP, thetaControllerI, thetaControllerD);
     thetaController->SetTolerance(frc::Rotation2d(poseToleranceTheta).Radians());
+    thetaController->SetConstraints(*thetaConstraints);
   }
 
   if(xConstraints == NULL) {
-    xConstraints = new frc::TrapezoidProfile<units::meter>::Constraints(maxVelocity, maxAcceleration);
+    xConstraints = new frc::TrapezoidProfile<units::meters>::Constraints(maxVelocity, maxAcceleration);
   } else {
     xConstraints->maxVelocity = maxVelocity;
     xConstraints->maxAcceleration = maxAcceleration;
@@ -1176,17 +1221,17 @@ void updateParameters(ParametersMessage parametersMessage) {
   xControllerD = parametersMessage.xControllerD;
 
   if(xController == NULL) {
-    xController = new frc::ProfiledPIDController<units::meter>(
+    xController = new frc2::PIDController(
       xControllerP,
       xControllerI,
-      xControllerD,
-      *xConstraints
+      xControllerD
     );
 
-    xController->SetTolerance(poseToleranceX);
+    xController->SetTolerance(poseToleranceX.value());
   } else {
     xController->SetPID(xControllerP, xControllerI, xControllerD);
-    xController->SetTolerance(poseToleranceX);
+    xController->SetTolerance(poseToleranceX.value());
+    //xController->SetConstraints(*xConstraints);
   }
 
   if(controller == NULL) {
@@ -1443,14 +1488,14 @@ void publishControlState(
 
   bool atPoseReference = controller->AtReference();
 
-  frc::ProfiledPIDController<units::meter>::Distance_t xPositionError = xController->GetPositionError();
-  frc::ProfiledPIDController<units::meter>::Velocity_t xVelocityError = xController->GetVelocityError();
+  double xPositionError = xController->GetPositionError();
+  double xVelocityError = xController->GetVelocityError();
 
   frc::ProfiledPIDController<units::radian>::Distance_t thetaPositionError = thetaController->GetPositionError();
   frc::ProfiledPIDController<units::radian>::Velocity_t thetaVelocityError = thetaController->GetVelocityError();
 
   frc::ProfiledPIDController<units::radian>::State thetaState = thetaController->GetSetpoint();
-  frc::ProfiledPIDController<units::meter>::State xState = xController->GetSetpoint(); 
+  double xState = xController->GetSetpoint(); 
   
   bool xAtSetpoint = xController->AtSetpoint();
   bool thetaAtSetpoint = thetaController->AtSetpoint();
@@ -1491,8 +1536,8 @@ void publishControlState(
     velocityY,
     velocityTheta,
 
-    double (xPositionError),    
-    double (xVelocityError),
+    xPositionError, 
+    xVelocityError,
 
     0.0, // no control in Y
     0.0, // no control in Y
@@ -1500,7 +1545,7 @@ void publishControlState(
     double (thetaPositionError),
     double (thetaVelocityError),
 
-    double (xState.position),
+    xState,
     0.0, // no control in Y
     double (thetaState.position),
 
@@ -1576,6 +1621,7 @@ enum commandTypes {
   RUN_TRAJECTORY_COMMAND,
   RUN_CALIBRATION_COMMAND,
   GOTO_HOME_COMMAND,
+  SET_ORIGIN_COMMAND,
 
   UNKNOWN_COMMAND
 };
@@ -1594,6 +1640,7 @@ commandTypes getCommandType(std::string const& commandType) {
   if(commandType == RUN_CALIBRATION_COMMAND_KEY) return RUN_CALIBRATION_COMMAND;
   if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
   if(commandType == GOTO_HOME_LOCATION_COMMAND_KEY) return GOTO_HOME_COMMAND;
+  if(commandType == SET_ORIGIN_COMMAND_KEY) return SET_ORIGIN_COMMAND;
 
   return UNKNOWN_COMMAND;
 }
@@ -1733,23 +1780,45 @@ bool firstRun = true;
 
 frc::Rotation2d lastHeading = frc::Rotation2d(0_deg);
 
-
+frc::Translation2d lastPosition;
 // 0,0
 // -0.5, 0.0,
 // -0.2, 
 void runCalibration() {
+  //runProfile(frc::Translation2d(0_m, 0_m));
+  std::cout << "position reached" << std::endl;
+  runProfile({0_m, 0_m});
+  runProfile({1.0_m, 0_m});
+  runProfile({-1.0_m, 0_m});
+  runProfile({1.0_m, 0_m});
+  runProfile({0_m, 0_m});
+  return;
+  std::cout << "position reached" << std::endl;
+  //runProfile(frc::Translation2d{0_m, 0.0_m});
+  
+  if(lastPosition.X().value() > 0) {
+    lastPosition = frc::Translation2d(0.0_m, 0_m);
+  } else {
+    lastPosition = frc::Translation2d(0.5_m, 0_m);
+  }
+
+  return;
   if(firstRun) {
     rotateToHeading(frc::Rotation2d(0_deg));
-    runProfile(frc::Translation2d(0_m, 0_m));
+    //runProfile(frc::Translation2d(0_m, 0_m));
     firstRun = false;
     return;
   }
-  
-  /*rotateToHeading(frc::Rotation2d(0_deg));
-  runProfile(frc::Translation2d(units::meter_t(lastCalibrationRun), 0_m));
 
-  lastCalibrationRun = lastCalibrationRun * -1;
+
   
+  rotateToHeading(lastHeading);
+  lastHeading = lastHeading + frc::Rotation2d(45_deg);
+  //runProfile(frc::Translation2d(units::meter_t(lastCalibrationRun), 0_m));
+
+  //lastCalibrationRun = lastCalibrationRun * -1;
+  return;
+
   if(firstRun == true) {
     rotateToHeading(frc::Rotation2d(0_deg));
     firstRun = false;
@@ -1765,8 +1834,8 @@ void runCalibration() {
   rotateToHeading(heading);
 
   lastHeading = heading;
-  return; */
-  //return; 
+  return;
+  //return; */
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
@@ -1776,10 +1845,20 @@ void runCalibration() {
   frc::TrajectoryConfig trajectoryConfig = frc::TrajectoryConfig(maxVelocity, maxAcceleration);
   trajectoryConfig.SetKinematics(*driveKinematics);
 
-  trajectoryConfig.SetReversed(true);
+  //trajectoryConfig.SetReversed(true);
 
-  frc::Pose2d endingPose = frc::Pose2d(0_m, 0_m, frc::Rotation2d(0_rad));
-  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(startingPose.pose, {
+  activeWaypoints.clear();
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.5_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+
+
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.pose, frc::Pose2d(-0.4_m, -0.4_m, frc::Rotation2d(0_deg))}, trajectoryConfig);
+  /*activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(startingPose.pose, {
     frc::Translation2d(0.0009770981897970765_m, -0.0008856590757978511_m),
     frc::Translation2d(-0.19932803071859573_m, 0.19261557900197174_m),
     frc::Translation2d(-0.3996331596269885_m, 0.20043381084349782_m),
@@ -1792,8 +1871,11 @@ void runCalibration() {
     frc::Translation2d(0.38790798134942395_m, -0.1406365532430759_m),
     frc::Translation2d(0.19248834339001641_m, -0.1435683901836482_m),
     frc::Translation2d(0.0029312945693911185_m, -0.003817496016370159_m)  
-  }, startingPose.pose, trajectoryConfig);
+  }, startingPose.pose, trajectoryConfig);*/
   
+  profileActiveTrajectory();
+
+
   profileActiveTrajectory();
 
   //return;
@@ -1822,7 +1904,11 @@ void runCalibration() {
     
       targetChassisSpeeds = controller->Calculate(robotPose.pose, state);
       
-      targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+      targetWheelSpeeds = driveKinematics->ToWheelSpeeds({targetChassisSpeeds.vx, 0_mps, targetChassisSpeeds.omega});
+
+      double left = targetChassisSpeeds.vx.value() - 0.5 * targetChassisSpeeds.omega.value() * trackWidth.value();
+      double right = targetChassisSpeeds.vx.value() + 0.5 * targetChassisSpeeds.omega.value() * trackWidth.value();
+
 
       frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
       frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
@@ -2117,39 +2203,14 @@ void driveOdometryTask() {
 	timer.initializeTimer();
 	timer.setLoopFrequency(wheelOdometryUpdateRate);
 
-  driveOdometry->ResetPosition(frc::Pose2d(), frc::Rotation2d());
-  WheelStatusMessage initialWheelStatus = getCurrentWheelStatus();
   poseInfo initialPose = getCurrentPose();
+  driveOdometry->ResetPosition(initialPose.pose, initialPose.pose.Rotation());
+  WheelStatusMessage initialWheelStatus = getCurrentWheelStatus();
 
   int64_t lastMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-
-  frc::Pose2d lastPose;
-
-  float enc_L = 0;             // encoder tics
-  float wheel_L_ang_pos = 0;   // radians
-  float wheel_L_ang_vel = 0;   // radians per second
-  float enc_R = 0;             // encoder tics
-  float wheel_R_ang_pos = 0;   // radians
-  float wheel_R_ang_vel = 0;   // radians per second
-  float robot_angular_pos = 0; // radians
-  float robot_angular_vel = 0; // radians per second
-  float robot_x_pos = 0;       // meters
-  float robot_y_pos = 0;       // meters
-  float robot_x_vel = 0;       // meters per second
-  float robot_y_vel = 0;       // meters per second 
-
-  float wheel_FL_ang_pos = 0; //radians
-  float wheel_FR_ang_pos = 0; //radians
-  float wheel_RL_ang_pos = 0; //radians
-  float wheel_RR_ang_pos = 0; //radians
-
-  float wheel_radius = wheelDiameter.value() / 2;
-  float robot_width = wheelBase.value();
-  float diameter_mod = 1;
-  float tyre_deflection = 1;
-
   
-  frc::Rotation2d angleOffset = initialPose.pose.Rotation();
+
+  frc::Pose2d lastPose = frc::Pose2d();
   frc::Rotation2d lastAngle = frc::Rotation2d(0_rad);
 
   while(keepRunning) {
@@ -2163,66 +2224,25 @@ void driveOdometryTask() {
     float delay_s = deltaTime.value();
     WheelStatusMessage wheelStatus = getCurrentWheelStatus();
   
-    /*float enc_FL = 0;            // encoder tics
-    float enc_RL = 0;            // encoder tics
-    float enc_FR = 0;            // encoder tics
-    float enc_RR = 0;            // encoder tics
-
-    Absolute2Increment(enc_FR, initialWheelStatus.angle[1], wheelStatus.angle[1], enc_res);
-    Absolute2Increment(enc_RR, initialWheelStatus.angle[0], wheelStatus.angle[0], enc_res);
-    Absolute2Increment(enc_RL, initialWheelStatus.angle[3], wheelStatus.angle[3], enc_res);
-    Absolute2Increment(enc_FL, initialWheelStatus.angle[2], wheelStatus.angle[2], enc_res);
-
-    //std::cout << enc_FR << std::endl;
-
-    wheel_FL_ang_pos = 2 * 3.14 * enc_FL / enc_res;
-    wheel_FR_ang_pos = 2 * 3.14 * enc_FR / enc_res;
-    wheel_RL_ang_pos = 2 * 3.14 * enc_RL / enc_res;
-    wheel_RR_ang_pos = 2 * 3.14 * enc_RR / enc_res;
-
-    enc_L = (enc_FL + enc_RL) / (2 * tyre_deflection);
-    enc_R = (enc_FR + enc_RR) / (2 * tyre_deflection);
-
-    wheel_L_ang_vel = ((2 * 3.14 * enc_L / enc_res) - wheel_L_ang_pos) / delay_s;
-    wheel_R_ang_vel = ((2 * 3.14 * enc_R / enc_res) - wheel_R_ang_pos) / delay_s;
-
-    wheel_L_ang_pos = 2 * 3.14 * enc_L / enc_res;
-    wheel_R_ang_pos = 2 * 3.14 * enc_R / enc_res;
-
-    robot_angular_vel = (((wheel_R_ang_pos - wheel_L_ang_pos) * wheel_radius / (robot_width * diameter_mod)) - robot_angular_pos) / delay_s;
-    robot_angular_pos = (wheel_R_ang_pos - wheel_L_ang_pos) * wheel_radius / (robot_width * diameter_mod);
-    robot_x_vel = (wheel_L_ang_vel * wheel_radius + robot_angular_vel * robot_width / 2) * cos(robot_angular_pos);
-    robot_y_vel = (wheel_L_ang_vel * wheel_radius + robot_angular_vel * robot_width / 2) * sin(robot_angular_pos);
-    robot_x_pos = robot_x_pos + robot_x_vel * delay_s;
-    robot_y_pos = robot_y_pos + robot_y_vel * delay_s;
-
-
-    std::cout << robot_x_pos << " " << robot_y_pos << std::endl;
-    
-    //std::cout << "wheel1 : " << wheelAnglePosition[1] << std::endl;
-    //std::cout << "wheel2 : " << wheelAnglePosition[2] << std::endl;
-    //std::cout << "wheel3 : " << wheelAnglePosition[3] << std::endl;
-    */
     // 0 - back right, 1 - front right, 2 - front left, 3 - back left
     frc::DifferentialDriveWheelSpeeds currentWheelSpeeds = frc::DifferentialDriveWheelSpeeds{
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[2] + wheelStatus.velocity[3]) / 2)),
       units::meters_per_second_t(rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2))
     };
 
+    poseInfo currentPose = getCurrentPose();
+
     lastMicro = currentMicro;
 
-    poseInfo currentPose = getCurrentPose();
-    frc::Rotation2d angle = currentPose.pose.Rotation() + angleOffset;
-
+    frc::Rotation2d angle = currentPose.pose.Rotation();
     auto [dx, dy, dTheta] = driveKinematics->ToChassisSpeeds(currentWheelSpeeds);
-    
+
     frc::Pose2d updatedOdometryPose = lastPose.Exp(
       {dx * deltaTime, dy * deltaTime, (angle - lastAngle).Radians()});
 
     lastPose = updatedOdometryPose;
     lastAngle = angle;
 
-    //frc::Pose2d updatedOdometryPose = frc::Pose2d(units::meter_t(robot_x_pos), units::meter_t(robot_y_pos), frc::Rotation2d(units::radian_t(robot_angular_pos)));
     PoseMessage message = poseMessageFromPose2d(
       uint64_t(currentMicro - startupTimestamp),
       wheelStatus.timestamp,
@@ -2236,6 +2256,78 @@ void driveOdometryTask() {
 
     redis->set(POSE_WHEEL_ODOMETRY_KEY, packed.str()); 
   }
+}
+
+void runActiveWaypoints() {
+  poseInfo currentPose = getCurrentPose();
+
+  activeWaypoints.clear();
+
+  //activeWaypoints.push_back(robotPose.pose.Translation());
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.5_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+
+  for(auto waypoint = activeWaypoints.begin(), lastWaypoint = activeWaypoints.end(); waypoint != activeWaypoints.end(); lastWaypoint = waypoint, ++waypoint) {
+    
+    frc::Translation2d currentWaypoint2d = *waypoint;
+
+    json currentWaypointJSON;
+    frc::to_json(currentWaypointJSON, currentWaypoint2d);
+    
+    std::cout << "current waypoint: " << currentWaypointJSON.dump() << std::endl;
+     poseInfo robotPose = getCurrentPose();
+
+          double angle = atan2(
+            currentWaypoint2d.Y().value() - currentPose.pose.Translation().Y().value(), 
+            currentWaypoint2d.X().value() - currentPose.pose.Translation().X().value()
+          );
+
+          frc::Rotation2d desiredRotation = frc::Rotation2d(units::radian_t(angle));
+          
+    rotateToHeading(desiredRotation);
+
+    runProfile(currentWaypoint2d);  
+    sleep(2);    
+    if(lastWaypoint != activeWaypoints.end()) { 
+      frc::Translation2d lastWaypoint2d = *lastWaypoint;
+      
+      json lastWaypointJSON;
+      frc::to_json(lastWaypointJSON, lastWaypoint2d);
+
+      std::cout << "last waypoint: " << lastWaypointJSON.dump() << std::endl;
+    } else {
+     
+      /*while(true) { 
+        poseInfo robotPose = getCurrentPose();
+
+        if(abs(currentWaypoint2d.X().value() - robotPose.pose.X().value()) <= poseToleranceX.value() &&
+         abs(currentWaypoint2d.Y().value() - robotPose.pose.Y().value()) <= poseToleranceY.value()) {
+          
+          std::cout << "at waypoint pose!" << std::endl;
+
+        } else {
+
+          double angle = atan2(
+            currentWaypoint2d.Y().value() - currentPose.pose.Translation().Y().value(), 
+            currentWaypoint2d.X().value() - currentPose.pose.Translation().X().value()
+          );
+
+          frc::Rotation2d desiredRotation = frc::Rotation2d(units::radian_t(angle));
+          
+          std::cout << "desired rotation: " << desiredRotation.Degrees().value() << std::endl;
+
+          rotateToHeading(desiredRotation);
+          runProfile(currentWaypoint2d);
+        }
+        */
+      }
+    }
+  //}
 }
 
 int main(int argc, char **argv) {
@@ -2298,10 +2390,10 @@ int main(int argc, char **argv) {
   auto waypoints = redis->get(TRAJECTORY_KEY);
 
   poseInfo startingPose = getCurrentPose();
-  rotationOffset = startingPose.pose.Rotation();
+  //rotationOffset = startingPose.pose.Rotation();
 
 
-  if(waypoints) {
+  /*if(waypoints) {
     string waypointsString = *waypoints;
 
     updateActiveWaypointsFromJSON(waypointsString);
@@ -2314,15 +2406,18 @@ int main(int argc, char **argv) {
     //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.3_m, robotPose.pose.Rotation()}); 
     //activeWaypoints.push_back(frc::Pose2d{0.5_m, -0.2_m, robotPose.pose.Rotation()}); 
 
-    /*activeWaypoints.push_back(robotPose.pose);
+    activeWaypoints.push_back(robotPose.pose);
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.0_m, robotPose.pose.Rotation()});
     activeWaypoints.push_back(frc::Pose2d{0.3_m, 0.3_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{0.0_m, 0.0_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{-0.3_m, 0.0_m, robotPose.pose.Rotation()}); 
     activeWaypoints.push_back(frc::Pose2d{-0.3_m, -0.3_m, robotPose.pose.Rotation()});  
 
-    generateTrajectoryFromActiveWaypoints(0.4_mps, 0.4_mps_sq);*/
-  }
+    generateTrajectoryFromActiveWaypoints(0.4_mps, 0.4_mps_sq);
+  }*/
+
+  //runActiveWaypoints();
+
 
   dumpWaypoints();
   
@@ -2349,6 +2444,29 @@ int main(int argc, char **argv) {
         std::cout << msg << std::endl;
         if(commandMessageJSON.find("command") != commandMessageJSON.end()) {
           switch (getCommandType(commandMessageJSON["command"].get<std::string>())) {
+            case SET_ORIGIN_COMMAND:
+              {
+                bool updatedOrigin = false;
+                
+                while(!updatedOrigin) {
+                  poseInfo currentPose = getCurrentPose();
+                  
+                  int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+                  if(abs(int(currentPose.localizedPoseMessage.timestamp - (currentMicro - startupTimestamp)) < 10000)) {
+                    driveOdometry->ResetPosition(currentPose.pose, currentPose.pose.Rotation());
+                    updatedOrigin = true;
+
+                    std::cout << "updated origin from localized position" << std::endl;
+                  }
+
+                  std::cout << "waiting for origin" << std::endl;
+
+                  sleep(1);
+                }
+
+                break;
+              }
             case GOTO_HOME_COMMAND:
 
               std::cout << "Home location command" << std::endl;
@@ -2380,6 +2498,9 @@ int main(int argc, char **argv) {
 
             case RUN_CALIBRATION_COMMAND:
               stopWheels();
+              
+              //rotateToHeading(frc::Rotation2d(0_deg));
+              //runProfile(frc::Translation2d(0_m, 0_m));
 
               runCalibration();
 
