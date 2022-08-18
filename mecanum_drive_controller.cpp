@@ -1477,7 +1477,123 @@ void runCalibration() {
   stopWheels();
 }
 
+
 void runActiveTrajectory() {
+  LoopTimer timer;
+	timer.initializeTimer();
+	timer.setLoopFrequency(controllerUpdateRate);
+
+  int64_t lastTrajectoryTime  = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t trajectoryStartTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+  bool trajectoryComplete = false;
+
+  poseInfo startingRobotPose = getCurrentPose();
+
+  /*auto waypoints = std::vector{startingRobotPose.pose,
+                               frc::Pose2d{0.3_m, 0.0_m, startingRobotPose.pose.Rotation() }};
+  auto trajectory = frc::TrajectoryGenerator::GenerateTrajectory(
+      waypoints, {0.4_mps, 0.4_mps_sq});*/
+
+  redis->publish(CONTROLLER_KEY, "runActiveTrajectory"); 
+  
+  while(keepRunning && !trajectoryComplete) {
+    /*try {
+      subscriber->consume();
+    } catch (const Error &err) {}*/
+    
+    timer.waitForNextLoop();
+
+    int64_t currentTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    int64_t dt = currentTime - lastTrajectoryTime;
+
+    lastTrajectoryTime = currentTime;
+    int64_t elapsedTime = currentTime - trajectoryStartTime;
+
+    poseInfo robotPose = getCurrentPose();
+    
+    if (abs(robotPose.pose.X().value()) > maxXPosition || abs(robotPose.pose.Y().value()) > maxYPosition) {
+      std::cout << "Out of bounds!" << std::endl;
+      
+      redis->publish(CONTROLLER_KEY, "boundsException"); 
+
+      stopWheels();
+
+      continue;
+    }
+
+    if(units::second_t(elapsedTime * 0.000001) > activeTrajectory.TotalTime()) {
+      trajectoryComplete = true;
+
+      redis->publish(CONTROLLER_KEY, "trajectoryComplete");
+
+      std::cout << "Trajectory complete!" << std::endl;
+
+      continue; 
+    }
+
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (elapsedTime * .000001));
+    json stateTrajectoryJSON;
+    
+    frc::to_json(stateTrajectoryJSON, state);
+
+    json trajectoryInfoJSON;
+
+    trajectoryInfoJSON["timestamp"] = robotPose.localizedPoseMessage.timestamp;
+    trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+    redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
+
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontLeft);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.frontRight);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearLeft);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.rearRight);
+
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.frontLeft.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.frontRight.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.rearLeft.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.rearRight.value());
+
+    // wheel data is
+    // 3 - back left
+    // 2 - front left
+    // 0 - back right
+    // 1 - front right
+
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+
+    WheelVoltageMessage message = {
+      uint32_t(currentMicro - startupTimestamp),
+      
+      {
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+      }
+    };
+
+    std::stringstream packed;
+    msgpack::pack(packed, message);
+
+    packed.seekg(0);
+    
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
+  }
+
+  stopWheels();
+
+}
+
+/*void runActiveTrajectory() {
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
@@ -1489,9 +1605,6 @@ void runActiveTrajectory() {
   bool trajectoryComplete = false;
 
   while(keepRunning && !trajectoryComplete) {
-    /*try {
-      subscriber->consume();
-    } catch (const Error &err) {}*/
     
     timer.waitForNextLoop();
 
@@ -1604,7 +1717,7 @@ void runActiveTrajectory() {
   }
 
   stopWheels();
-}
+}*/
 
 void runActiveScanPattern() {
   poseInfo startingRobotPose = getCurrentPose();
@@ -1972,7 +2085,9 @@ int main(int argc, char **argv) {
       case TRAJECTORY_MESSAGE:
         std::cout << "got trajectory! " << msg << std::endl;
 
-        updateActiveScanPatternsFromJSON(msg);
+        updateActiveWaypointsFromJSON(msg);
+        
+        //updateActiveScanPatternsFromJSON(msg);
 
         break;
 
@@ -2021,7 +2136,8 @@ int main(int argc, char **argv) {
             case RUN_TRAJECTORY_COMMAND:
               stopWheels();
 
-              runActiveScanPattern();
+              //runActiveScanPattern();
+              runActiveTrajectory();
               break;
             break;
           }
