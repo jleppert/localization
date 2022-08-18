@@ -978,6 +978,19 @@ void rotateToHeading(frc::Rotation2d heading) {
   stopWheels();
 }
 
+void rotateToPoint(frc::Translation2d position) {
+  poseInfo startingPose = getCurrentPose(); 
+
+  double angle = atan2(
+    position.Y().value() - startingPose.pose.Translation().Y().value(), 
+    position.X().value() - startingPose.pose.Translation().X().value()
+  );
+
+  std::cout << "angle: " << angle << std::endl;
+
+  rotateToHeading(frc::Rotation2d(units::radian_t(angle)));
+}
+
 void runProfile(frc::Translation2d position) {
   LoopTimer timer;
 	timer.initializeTimer();
@@ -991,9 +1004,9 @@ void runProfile(frc::Translation2d position) {
     position.X().value() - startingPose.pose.Translation().X().value()
   );
 
-  frc::Rotation2d heading = frc::Rotation2d(units::radian_t(angle));
+  frc::Rotation2d heading = frc::Rotation2d(0_deg);
 
-  rotateToHeading(heading);
+  //rotateToHeading(heading);
 
   frc::Translation2d positionError = position - startingPose.pose.Translation();
   
@@ -1051,8 +1064,8 @@ void runProfile(frc::Translation2d position) {
     targetChassisSpeeds = frc::ChassisSpeeds::FromFieldRelativeSpeeds(
       state.velocity + xFeedback,
       units::meters_per_second_t(0.0),
-      0_rad_per_s, 
-      //thetaFF,
+      //0_rad_per_s, 
+      thetaFF,
       currentPose.pose.Rotation()
     );
 
@@ -1060,17 +1073,24 @@ void runProfile(frc::Translation2d position) {
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
-    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-    frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-    backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-    backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
+    units::meters_per_second_t left = units::meters_per_second_t(
+      targetChassisSpeeds.vx.value() - targetChassisSpeeds.omega.value() * (trackWidth.value() / 2)
+    );
+    units::meters_per_second_t right = units::meters_per_second_t(
+      targetChassisSpeeds.vx.value() + targetChassisSpeeds.omega.value() * (trackWidth.value() / 2)
+    );
+    
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(left);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(right);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(left);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(right);
 
     std::cout << "here" << std::endl;
 
-    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
-    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
-    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
-    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  left.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  right.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  left.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  right.value());
     
     std::cout << "here2" << std::endl;
 
@@ -1785,8 +1805,19 @@ frc::Translation2d lastPosition;
 // -0.5, 0.0,
 // -0.2, 
 void runCalibration() {
-  //runProfile(frc::Translation2d(0_m, 0_m));
-  std::cout << "position reached" << std::endl;
+  /*rotateToPoint(frc::Translation2d(0_m, 0_m));
+  runProfile(frc::Translation2d(0_m, 0_m));
+
+  return;
+
+  runProfile(frc::Translation2d(0.5_m, 0_m));
+  runProfile(frc::Translation2d(-0.5_m, 0_m));
+  runProfile(frc::Translation2d(0.5_m, 0_m));
+  runProfile(frc::Translation2d(0_m, 0_m));
+
+  return;
+
+  *std::cout << "position reached" << std::endl;
   runProfile({0_m, 0_m});
   runProfile({1.0_m, 0_m});
   runProfile({-1.0_m, 0_m});
@@ -1802,7 +1833,7 @@ void runCalibration() {
     lastPosition = frc::Translation2d(0.5_m, 0_m);
   }
 
-  return;
+  return;*/
   if(firstRun) {
     rotateToHeading(frc::Rotation2d(0_deg));
     //runProfile(frc::Translation2d(0_m, 0_m));
@@ -1810,8 +1841,7 @@ void runCalibration() {
     return;
   }
 
-
-  
+  /*
   rotateToHeading(lastHeading);
   lastHeading = lastHeading + frc::Rotation2d(45_deg);
   //runProfile(frc::Translation2d(units::meter_t(lastCalibrationRun), 0_m));
@@ -1824,9 +1854,9 @@ void runCalibration() {
     firstRun = false;
 
     return;
-  }
+  }*/
 
-  poseInfo currentPose = getCurrentPose();
+  /*poseInfo currentPose = getCurrentPose();
 
   frc::Rotation2d heading = lastHeading.RotateBy(frc::Rotation2d(45_deg));
   std::cout << heading.Degrees().value() << std::endl;
@@ -1836,6 +1866,7 @@ void runCalibration() {
   lastHeading = heading;
   return;
   //return; */
+  
   LoopTimer timer;
 	timer.initializeTimer();
 	timer.setLoopFrequency(controllerUpdateRate);
@@ -1847,19 +1878,18 @@ void runCalibration() {
 
   //trajectoryConfig.SetReversed(true);
 
-  activeWaypoints.clear();
+  /*activeWaypoints.clear();
   activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
   activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
   activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.5_m});
   activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
   activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
   activeWaypoints.push_back(frc::Translation2d{0.5_m, 0.0_m});
-  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});
+  activeWaypoints.push_back(frc::Translation2d{0.0_m, 0.0_m});*/
 
-
-  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.pose, frc::Pose2d(-0.4_m, -0.4_m, frc::Rotation2d(0_deg))}, trajectoryConfig);
-  /*activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(startingPose.pose, {
-    frc::Translation2d(0.0009770981897970765_m, -0.0008856590757978511_m),
+  //activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory({startingPose.pose, frc::Pose2d(-0.4_m, -0.4_m, frc::Rotation2d(0_deg))}, trajectoryConfig);
+  activeTrajectory = frc::TrajectoryGenerator::GenerateTrajectory(startingPose.pose, {
+    /*frc::Translation2d(0.0009770981897970765_m, -0.0008856590757978511_m),
     frc::Translation2d(-0.19932803071859573_m, 0.19261557900197174_m),
     frc::Translation2d(-0.3996331596269885_m, 0.20043381084349782_m),
     frc::Translation2d(-0.5032055677454745_m, 0.011818967666682001_m),
@@ -1870,91 +1900,93 @@ void runCalibration() {
     frc::Translation2d(0.49832007679648926_m, 0.004978014805346653_m),
     frc::Translation2d(0.38790798134942395_m, -0.1406365532430759_m),
     frc::Translation2d(0.19248834339001641_m, -0.1435683901836482_m),
-    frc::Translation2d(0.0029312945693911185_m, -0.003817496016370159_m)  
-  }, startingPose.pose, trajectoryConfig);*/
+    frc::Translation2d(0.0029312945693911185_m, -0.003817496016370159_m)*/
+    frc::Translation2d(-0.3990234375_m, -0.40175476074218747_m),frc::Translation2d(-0.3990234375_m, -0.3517547607421875_m),frc::Translation2d(-0.3990234375_m, -0.3017547607421875_m),frc::Translation2d(-0.3990234375_m, -0.25175476074218744_m),frc::Translation2d(-0.3990234375_m, -0.20175476074218748_m),frc::Translation2d(-0.3990234375_m, -0.15175476074218747_m),frc::Translation2d(-0.3990234375_m, -0.10175476074218748_m),frc::Translation2d(-0.3990234375_m, -0.05175476074218743_m),frc::Translation2d(-0.3990234375_m, -0.0017547607421875_m),frc::Translation2d(-0.3990234375_m, 0.048245239257812544_m),frc::Translation2d(-0.3990234375_m, 0.09824523925781253_m),frc::Translation2d(-0.3990234375_m, 0.14824523925781258_m),frc::Translation2d(-0.3990234375_m, 0.1982452392578125_m),frc::Translation2d(-0.3990234375_m, 0.24824523925781256_m),frc::Translation2d(-0.3990234375_m, 0.2982452392578126_m),frc::Translation2d(-0.3990234375_m, 0.34824523925781253_m),frc::Translation2d(-0.3990234375_m, 0.39824523925781247_m),frc::Translation2d(-0.34902343750000003_m, 0.39824523925781247_m),frc::Translation2d(-0.34902343750000003_m, 0.34824523925781253_m),frc::Translation2d(-0.34902343750000003_m, 0.2982452392578126_m),frc::Translation2d(-0.34902343750000003_m, 0.24824523925781256_m),frc::Translation2d(-0.34902343750000003_m, 0.1982452392578125_m),frc::Translation2d(-0.34902343750000003_m, 0.14824523925781258_m),frc::Translation2d(-0.34902343750000003_m, 0.09824523925781253_m),frc::Translation2d(-0.34902343750000003_m, 0.048245239257812544_m),frc::Translation2d(-0.34902343750000003_m, -0.0017547607421875_m),frc::Translation2d(-0.34902343750000003_m, -0.05175476074218743_m),frc::Translation2d(-0.34902343750000003_m, -0.10175476074218748_m),frc::Translation2d(-0.34902343750000003_m, -0.15175476074218747_m),frc::Translation2d(-0.34902343750000003_m, -0.20175476074218748_m),frc::Translation2d(-0.34902343750000003_m, -0.25175476074218744_m),frc::Translation2d(-0.34902343750000003_m, -0.3017547607421875_m),frc::Translation2d(-0.34902343750000003_m, -0.3517547607421875_m),frc::Translation2d(-0.34902343750000003_m, -0.40175476074218747_m),frc::Translation2d(-0.29902343750000004_m, -0.40175476074218747_m),frc::Translation2d(-0.29902343750000004_m, -0.3517547607421875_m),frc::Translation2d(-0.29902343750000004_m, -0.3017547607421875_m),frc::Translation2d(-0.29902343750000004_m, -0.25175476074218744_m),frc::Translation2d(-0.29902343750000004_m, -0.20175476074218748_m),frc::Translation2d(-0.29902343750000004_m, -0.15175476074218747_m),frc::Translation2d(-0.29902343750000004_m, -0.10175476074218748_m),frc::Translation2d(-0.29902343750000004_m, -0.05175476074218743_m),frc::Translation2d(-0.29902343750000004_m, -0.0017547607421875_m),frc::Translation2d(-0.29902343750000004_m, 0.048245239257812544_m),frc::Translation2d(-0.29902343750000004_m, 0.09824523925781253_m),frc::Translation2d(-0.29902343750000004_m, 0.14824523925781258_m),frc::Translation2d(-0.29902343750000004_m, 0.1982452392578125_m),frc::Translation2d(-0.29902343750000004_m, 0.24824523925781256_m),frc::Translation2d(-0.29902343750000004_m, 0.2982452392578126_m),frc::Translation2d(-0.29902343750000004_m, 0.34824523925781253_m),frc::Translation2d(-0.29902343750000004_m, 0.39824523925781247_m),frc::Translation2d(-0.2490234375_m, 0.39824523925781247_m),frc::Translation2d(-0.2490234375_m, 0.34824523925781253_m),frc::Translation2d(-0.2490234375_m, 0.2982452392578126_m),frc::Translation2d(-0.2490234375_m, 0.24824523925781256_m),frc::Translation2d(-0.2490234375_m, 0.1982452392578125_m),frc::Translation2d(-0.2490234375_m, 0.14824523925781258_m),frc::Translation2d(-0.2490234375_m, 0.09824523925781253_m),frc::Translation2d(-0.2490234375_m, 0.048245239257812544_m),frc::Translation2d(-0.2490234375_m, -0.0017547607421875_m),frc::Translation2d(-0.2490234375_m, -0.05175476074218743_m),frc::Translation2d(-0.2490234375_m, -0.10175476074218748_m),frc::Translation2d(-0.2490234375_m, -0.15175476074218747_m),frc::Translation2d(-0.2490234375_m, -0.20175476074218748_m),frc::Translation2d(-0.2490234375_m, -0.25175476074218744_m),frc::Translation2d(-0.2490234375_m, -0.3017547607421875_m),frc::Translation2d(-0.2490234375_m, -0.3517547607421875_m),frc::Translation2d(-0.2490234375_m, -0.40175476074218747_m),frc::Translation2d(-0.1990234375_m, -0.40175476074218747_m),frc::Translation2d(-0.1990234375_m, -0.3517547607421875_m),frc::Translation2d(-0.1990234375_m, -0.3017547607421875_m),frc::Translation2d(-0.1990234375_m, -0.25175476074218744_m),frc::Translation2d(-0.1990234375_m, -0.20175476074218748_m),frc::Translation2d(-0.1990234375_m, -0.15175476074218747_m),frc::Translation2d(-0.1990234375_m, -0.10175476074218748_m),frc::Translation2d(-0.1990234375_m, -0.05175476074218743_m),frc::Translation2d(-0.1990234375_m, -0.0017547607421875_m),frc::Translation2d(-0.1990234375_m, 0.048245239257812544_m),frc::Translation2d(-0.1990234375_m, 0.09824523925781253_m),frc::Translation2d(-0.1990234375_m, 0.14824523925781258_m),frc::Translation2d(-0.1990234375_m, 0.1982452392578125_m),frc::Translation2d(-0.1990234375_m, 0.24824523925781256_m),frc::Translation2d(-0.1990234375_m, 0.2982452392578126_m),frc::Translation2d(-0.1990234375_m, 0.34824523925781253_m),frc::Translation2d(-0.1990234375_m, 0.39824523925781247_m),frc::Translation2d(-0.14902343749999997_m, 0.39824523925781247_m),frc::Translation2d(-0.14902343749999997_m, 0.34824523925781253_m),frc::Translation2d(-0.14902343749999997_m, 0.2982452392578126_m),frc::Translation2d(-0.14902343749999997_m, 0.24824523925781256_m),frc::Translation2d(-0.14902343749999997_m, 0.1982452392578125_m),frc::Translation2d(-0.14902343749999997_m, 0.14824523925781258_m),frc::Translation2d(-0.14902343749999997_m, 0.09824523925781253_m),frc::Translation2d(-0.14902343749999997_m, 0.048245239257812544_m),frc::Translation2d(-0.14902343749999997_m, -0.0017547607421875_m),frc::Translation2d(-0.14902343749999997_m, -0.05175476074218743_m),frc::Translation2d(-0.14902343749999997_m, -0.10175476074218748_m),frc::Translation2d(-0.14902343749999997_m, -0.15175476074218747_m),frc::Translation2d(-0.14902343749999997_m, -0.20175476074218748_m),frc::Translation2d(-0.14902343749999997_m, -0.25175476074218744_m),frc::Translation2d(-0.14902343749999997_m, -0.3017547607421875_m),frc::Translation2d(-0.14902343749999997_m, -0.3517547607421875_m),frc::Translation2d(-0.14902343749999997_m, -0.40175476074218747_m),frc::Translation2d(-0.09902343749999998_m, -0.40175476074218747_m),frc::Translation2d(-0.09902343749999998_m, -0.3517547607421875_m),frc::Translation2d(-0.09902343749999998_m, -0.3017547607421875_m),frc::Translation2d(-0.09902343749999998_m, -0.25175476074218744_m),frc::Translation2d(-0.09902343749999998_m, -0.20175476074218748_m),frc::Translation2d(-0.09902343749999998_m, -0.15175476074218747_m),frc::Translation2d(-0.09902343749999998_m, -0.10175476074218748_m),frc::Translation2d(-0.09902343749999998_m, -0.05175476074218743_m),frc::Translation2d(-0.09902343749999998_m, -0.0017547607421875_m),frc::Translation2d(-0.09902343749999998_m, 0.048245239257812544_m),frc::Translation2d(-0.09902343749999998_m, 0.09824523925781253_m),frc::Translation2d(-0.09902343749999998_m, 0.14824523925781258_m),frc::Translation2d(-0.09902343749999998_m, 0.1982452392578125_m),frc::Translation2d(-0.09902343749999998_m, 0.24824523925781256_m),frc::Translation2d(-0.09902343749999998_m, 0.2982452392578126_m),frc::Translation2d(-0.09902343749999998_m, 0.34824523925781253_m),frc::Translation2d(-0.09902343749999998_m, 0.39824523925781247_m),frc::Translation2d(-0.04902343749999999_m, 0.39824523925781247_m),frc::Translation2d(-0.04902343749999999_m, 0.34824523925781253_m),frc::Translation2d(-0.04902343749999999_m, 0.2982452392578126_m),frc::Translation2d(-0.04902343749999999_m, 0.24824523925781256_m),frc::Translation2d(-0.04902343749999999_m, 0.1982452392578125_m),frc::Translation2d(-0.04902343749999999_m, 0.14824523925781258_m),frc::Translation2d(-0.04902343749999999_m, 0.09824523925781253_m),frc::Translation2d(-0.04902343749999999_m, 0.048245239257812544_m),frc::Translation2d(-0.04902343749999999_m, -0.0017547607421875_m),frc::Translation2d(-0.04902343749999999_m, -0.05175476074218743_m),frc::Translation2d(-0.04902343749999999_m, -0.10175476074218748_m),frc::Translation2d(-0.04902343749999999_m, -0.15175476074218747_m),frc::Translation2d(-0.04902343749999999_m, -0.20175476074218748_m),frc::Translation2d(-0.04902343749999999_m, -0.25175476074218744_m),frc::Translation2d(-0.04902343749999999_m, -0.3017547607421875_m),frc::Translation2d(-0.04902343749999999_m, -0.3517547607421875_m),frc::Translation2d(-0.04902343749999999_m, -0.40175476074218747_m),frc::Translation2d(0.0009765625_m, -0.40175476074218747_m),frc::Translation2d(0.0009765625_m, -0.3517547607421875_m),frc::Translation2d(0.0009765625_m, -0.3017547607421875_m),frc::Translation2d(0.0009765625_m, -0.25175476074218744_m),frc::Translation2d(0.0009765625_m, -0.20175476074218748_m),frc::Translation2d(0.0009765625_m, -0.15175476074218747_m),frc::Translation2d(0.0009765625_m, -0.10175476074218748_m),frc::Translation2d(0.0009765625_m, -0.05175476074218743_m),frc::Translation2d(0.0009765625_m, -0.0017547607421875_m),frc::Translation2d(0.0009765625_m, 0.048245239257812544_m),frc::Translation2d(0.0009765625_m, 0.09824523925781253_m),frc::Translation2d(0.0009765625_m, 0.14824523925781258_m),frc::Translation2d(0.0009765625_m, 0.1982452392578125_m),frc::Translation2d(0.0009765625_m, 0.24824523925781256_m),frc::Translation2d(0.0009765625_m, 0.2982452392578126_m),frc::Translation2d(0.0009765625_m, 0.34824523925781253_m),frc::Translation2d(0.0009765625_m, 0.39824523925781247_m),frc::Translation2d(0.05097656249999999_m, 0.39824523925781247_m),frc::Translation2d(0.05097656249999999_m, 0.34824523925781253_m),frc::Translation2d(0.05097656249999999_m, 0.2982452392578126_m),frc::Translation2d(0.05097656249999999_m, 0.24824523925781256_m),frc::Translation2d(0.05097656249999999_m, 0.1982452392578125_m),frc::Translation2d(0.05097656249999999_m, 0.14824523925781258_m),frc::Translation2d(0.05097656249999999_m, 0.09824523925781253_m),frc::Translation2d(0.05097656249999999_m, 0.048245239257812544_m),frc::Translation2d(0.05097656249999999_m, -0.0017547607421875_m),frc::Translation2d(0.05097656249999999_m, -0.05175476074218743_m),frc::Translation2d(0.05097656249999999_m, -0.10175476074218748_m),frc::Translation2d(0.05097656249999999_m, -0.15175476074218747_m),frc::Translation2d(0.05097656249999999_m, -0.20175476074218748_m),frc::Translation2d(0.05097656249999999_m, -0.25175476074218744_m),frc::Translation2d(0.05097656249999999_m, -0.3017547607421875_m),frc::Translation2d(0.05097656249999999_m, -0.3517547607421875_m),frc::Translation2d(0.05097656249999999_m, -0.40175476074218747_m),frc::Translation2d(0.10097656250000009_m, -0.40175476074218747_m),frc::Translation2d(0.10097656250000009_m, -0.3517547607421875_m),frc::Translation2d(0.10097656250000009_m, -0.3017547607421875_m),frc::Translation2d(0.10097656250000009_m, -0.25175476074218744_m),frc::Translation2d(0.10097656250000009_m, -0.20175476074218748_m),frc::Translation2d(0.10097656250000009_m, -0.15175476074218747_m),frc::Translation2d(0.10097656250000009_m, -0.10175476074218748_m),frc::Translation2d(0.10097656250000009_m, -0.05175476074218743_m),frc::Translation2d(0.10097656250000009_m, -0.0017547607421875_m),frc::Translation2d(0.10097656250000009_m, 0.048245239257812544_m),frc::Translation2d(0.10097656250000009_m, 0.09824523925781253_m),frc::Translation2d(0.10097656250000009_m, 0.14824523925781258_m),frc::Translation2d(0.10097656250000009_m, 0.1982452392578125_m),frc::Translation2d(0.10097656250000009_m, 0.24824523925781256_m),frc::Translation2d(0.10097656250000009_m, 0.2982452392578126_m),frc::Translation2d(0.10097656250000009_m, 0.34824523925781253_m),frc::Translation2d(0.10097656250000009_m, 0.39824523925781247_m),frc::Translation2d(0.15097656250000002_m, 0.39824523925781247_m),frc::Translation2d(0.15097656250000002_m, 0.34824523925781253_m),frc::Translation2d(0.15097656250000002_m, 0.2982452392578126_m),frc::Translation2d(0.15097656250000002_m, 0.24824523925781256_m),frc::Translation2d(0.15097656250000002_m, 0.1982452392578125_m),frc::Translation2d(0.15097656250000002_m, 0.14824523925781258_m),frc::Translation2d(0.15097656250000002_m, 0.09824523925781253_m),frc::Translation2d(0.15097656250000002_m, 0.048245239257812544_m),frc::Translation2d(0.15097656250000002_m, -0.0017547607421875_m),frc::Translation2d(0.15097656250000002_m, -0.05175476074218743_m),frc::Translation2d(0.15097656250000002_m, -0.10175476074218748_m),frc::Translation2d(0.15097656250000002_m, -0.15175476074218747_m),frc::Translation2d(0.15097656250000002_m, -0.20175476074218748_m),frc::Translation2d(0.15097656250000002_m, -0.25175476074218744_m),frc::Translation2d(0.15097656250000002_m, -0.3017547607421875_m),frc::Translation2d(0.15097656250000002_m, -0.3517547607421875_m),frc::Translation2d(0.15097656250000002_m, -0.40175476074218747_m),frc::Translation2d(0.20097656250000007_m, -0.40175476074218747_m),frc::Translation2d(0.20097656250000007_m, -0.3517547607421875_m),frc::Translation2d(0.20097656250000007_m, -0.3017547607421875_m),frc::Translation2d(0.20097656250000007_m, -0.25175476074218744_m),frc::Translation2d(0.20097656250000007_m, -0.20175476074218748_m),frc::Translation2d(0.20097656250000007_m, -0.15175476074218747_m),frc::Translation2d(0.20097656250000007_m, -0.10175476074218748_m),frc::Translation2d(0.20097656250000007_m, -0.05175476074218743_m),frc::Translation2d(0.20097656250000007_m, -0.0017547607421875_m),frc::Translation2d(0.20097656250000007_m, 0.048245239257812544_m),frc::Translation2d(0.20097656250000007_m, 0.09824523925781253_m),frc::Translation2d(0.20097656250000007_m, 0.14824523925781258_m),frc::Translation2d(0.20097656250000007_m, 0.1982452392578125_m),frc::Translation2d(0.20097656250000007_m, 0.24824523925781256_m),frc::Translation2d(0.20097656250000007_m, 0.2982452392578126_m),frc::Translation2d(0.20097656250000007_m, 0.34824523925781253_m),frc::Translation2d(0.20097656250000007_m, 0.39824523925781247_m),frc::Translation2d(0.2509765625_m, 0.39824523925781247_m),frc::Translation2d(0.2509765625_m, 0.34824523925781253_m),frc::Translation2d(0.2509765625_m, 0.2982452392578126_m),frc::Translation2d(0.2509765625_m, 0.24824523925781256_m),frc::Translation2d(0.2509765625_m, 0.1982452392578125_m),frc::Translation2d(0.2509765625_m, 0.14824523925781258_m),frc::Translation2d(0.2509765625_m, 0.09824523925781253_m),frc::Translation2d(0.2509765625_m, 0.048245239257812544_m),frc::Translation2d(0.2509765625_m, -0.0017547607421875_m),frc::Translation2d(0.2509765625_m, -0.05175476074218743_m),frc::Translation2d(0.2509765625_m, -0.10175476074218748_m),frc::Translation2d(0.2509765625_m, -0.15175476074218747_m),frc::Translation2d(0.2509765625_m, -0.20175476074218748_m),frc::Translation2d(0.2509765625_m, -0.25175476074218744_m),frc::Translation2d(0.2509765625_m, -0.3017547607421875_m),frc::Translation2d(0.2509765625_m, -0.3517547607421875_m),frc::Translation2d(0.2509765625_m, -0.40175476074218747_m),frc::Translation2d(0.30097656250000004_m, -0.40175476074218747_m),frc::Translation2d(0.30097656250000004_m, -0.3517547607421875_m),frc::Translation2d(0.30097656250000004_m, -0.3017547607421875_m),frc::Translation2d(0.30097656250000004_m, -0.25175476074218744_m),frc::Translation2d(0.30097656250000004_m, -0.20175476074218748_m),frc::Translation2d(0.30097656250000004_m, -0.15175476074218747_m),frc::Translation2d(0.30097656250000004_m, -0.10175476074218748_m),frc::Translation2d(0.30097656250000004_m, -0.05175476074218743_m),frc::Translation2d(0.30097656250000004_m, -0.0017547607421875_m),frc::Translation2d(0.30097656250000004_m, 0.048245239257812544_m),frc::Translation2d(0.30097656250000004_m, 0.09824523925781253_m),frc::Translation2d(0.30097656250000004_m, 0.14824523925781258_m),frc::Translation2d(0.30097656250000004_m, 0.1982452392578125_m),frc::Translation2d(0.30097656250000004_m, 0.24824523925781256_m),frc::Translation2d(0.30097656250000004_m, 0.2982452392578126_m),frc::Translation2d(0.30097656250000004_m, 0.34824523925781253_m),frc::Translation2d(0.30097656250000004_m, 0.39824523925781247_m),frc::Translation2d(0.3509765625_m, 0.39824523925781247_m),frc::Translation2d(0.3509765625_m, 0.34824523925781253_m),frc::Translation2d(0.3509765625_m, 0.2982452392578126_m),frc::Translation2d(0.3509765625_m, 0.24824523925781256_m),frc::Translation2d(0.3509765625_m, 0.1982452392578125_m),frc::Translation2d(0.3509765625_m, 0.14824523925781258_m),frc::Translation2d(0.3509765625_m, 0.09824523925781253_m),frc::Translation2d(0.3509765625_m, 0.048245239257812544_m),frc::Translation2d(0.3509765625_m, -0.0017547607421875_m),frc::Translation2d(0.3509765625_m, -0.05175476074218743_m),frc::Translation2d(0.3509765625_m, -0.10175476074218748_m),frc::Translation2d(0.3509765625_m, -0.15175476074218747_m),frc::Translation2d(0.3509765625_m, -0.20175476074218748_m),frc::Translation2d(0.3509765625_m, -0.25175476074218744_m),frc::Translation2d(0.3509765625_m, -0.3017547607421875_m),frc::Translation2d(0.3509765625_m, -0.3517547607421875_m),frc::Translation2d(0.3509765625_m, -0.40175476074218747_m),frc::Translation2d(0.4009765625_m, -0.40175476074218747_m),frc::Translation2d(0.4009765625_m, -0.3517547607421875_m),frc::Translation2d(0.4009765625_m, -0.3017547607421875_m),frc::Translation2d(0.4009765625_m, -0.25175476074218744_m),frc::Translation2d(0.4009765625_m, -0.20175476074218748_m),frc::Translation2d(0.4009765625_m, -0.15175476074218747_m),frc::Translation2d(0.4009765625_m, -0.10175476074218748_m),frc::Translation2d(0.4009765625_m, -0.05175476074218743_m),frc::Translation2d(0.4009765625_m, -0.0017547607421875_m),frc::Translation2d(0.4009765625_m, 0.048245239257812544_m),frc::Translation2d(0.4009765625_m, 0.09824523925781253_m),frc::Translation2d(0.4009765625_m, 0.14824523925781258_m),frc::Translation2d(0.4009765625_m, 0.1982452392578125_m),frc::Translation2d(0.4009765625_m, 0.24824523925781256_m),frc::Translation2d(0.4009765625_m, 0.2982452392578126_m),frc::Translation2d(0.4009765625_m, 0.34824523925781253_m),frc::Translation2d(0.4009765625_m, 0.39824523925781247_m)
+  }, startingPose.pose, trajectoryConfig);
   
   profileActiveTrajectory();
 
-
-  profileActiveTrajectory();
-
   //return;
-  bool profileComplete = false; 
-  while(keepRunning && !profileComplete) {
+  bool profileComplete = false;
+  
+  std::cout << "total time: " << activeTrajectory.TotalTime().value() << std::endl;
+
+  int64_t startTime = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+  int64_t deltaTime = 0;
+   
+  while(units::second_t(deltaTime * 0.000001) < activeTrajectory.TotalTime()) {
     timer.waitForNextLoop();
 
     poseInfo robotPose = getCurrentPose();
 
-    if(units::second_t(timer.elapsedTime()) < activeTrajectory.TotalTime()) {
-      std::cout << "running!" << std::endl;
-      
-      //frc::TrapezoidProfile<units::meters>::State setPoint = profile.Calculate(units::second_t (timer.elapsedTime()));
-      frc::Trajectory::State state = activeTrajectory.Sample(units::second_t (timer.elapsedTime()));
-      json stateTrajectoryJSON;
+    std::cout << "running!" << std::endl;
+
+    int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+    deltaTime = (currentMicro - startTime);
     
-      frc::to_json(stateTrajectoryJSON, state);
+    frc::Trajectory::State state = activeTrajectory.Sample(units::second_t(deltaTime * 0.000001));
+    json stateTrajectoryJSON;
+  
+    frc::to_json(stateTrajectoryJSON, state);
 
-      json trajectoryInfoJSON;
-      
-      int64_t currentMicro = duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
-      trajectoryInfoJSON["timestamp"] = uint64_t(currentMicro - startupTimestamp),
-      trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
-
-      redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+    json trajectoryInfoJSON;
     
-      targetChassisSpeeds = controller->Calculate(robotPose.pose, state);
+    trajectoryInfoJSON["timestamp"] = uint64_t(currentMicro - startupTimestamp),
+    trajectoryInfoJSON["trajectory"] = stateTrajectoryJSON;
+
+    redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
+  
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state);
+    
+    targetWheelSpeeds = driveKinematics->ToWheelSpeeds({targetChassisSpeeds.vx, 0_mps, targetChassisSpeeds.omega});
+
+    units::meters_per_second_t left = units::meters_per_second_t(
+      targetChassisSpeeds.vx.value() - targetChassisSpeeds.omega.value() * (trackWidth.value() / 2)
+    );
+    units::meters_per_second_t right = units::meters_per_second_t(
+      targetChassisSpeeds.vx.value() + targetChassisSpeeds.omega.value() * (trackWidth.value() / 2)
+    );
+
+    frontLeftFeedforward  = wheelMotorFeedforward->Calculate(left);
+    frontRightFeedforward = wheelMotorFeedforward->Calculate(right);
+    backLeftFeedforward   = wheelMotorFeedforward->Calculate(left);
+    backRightFeedforward  = wheelMotorFeedforward->Calculate(right);
+
+    WheelStatusMessage wheelStatus = getCurrentWheelStatus();
+
+    // 1 - back right, 2 - front right, 3 - front left, 4 - back left
+
+    frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  left.value());
+    frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  right.value());
+    backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  left.value());
+    backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  right.value());
+
+    //double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  targetWheelSpeeds.right.value());
+    //double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  targetWheelSpeeds.left.value());
+
+    // wheel data is
+    // 3 - back left
+    // 2 - front left
+    // 0 - back right
+    // 1 - front right
+
+    WheelVoltageMessage message = {
+      uint64_t(currentMicro - startupTimestamp),
       
-      targetWheelSpeeds = driveKinematics->ToWheelSpeeds({targetChassisSpeeds.vx, 0_mps, targetChassisSpeeds.omega});
+      {
+        int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
+        int16_t (normalizeMotorVoltage(frontRightOutput * 0.2, frontRightFeedforward * 0.2)),
+        int16_t (normalizeMotorVoltage(frontLeftOutput * 0.2, frontLeftFeedforward * 0.2)),
+        int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
+      }
+    };
 
-      double left = targetChassisSpeeds.vx.value() - 0.5 * targetChassisSpeeds.omega.value() * trackWidth.value();
-      double right = targetChassisSpeeds.vx.value() + 0.5 * targetChassisSpeeds.omega.value() * trackWidth.value();
+    std::stringstream packed;
+    msgpack::pack(packed, message);
 
-
-      frontLeftFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-      frontRightFeedforward = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-      backLeftFeedforward   = wheelMotorFeedforward->Calculate(targetWheelSpeeds.left);
-      backRightFeedforward  = wheelMotorFeedforward->Calculate(targetWheelSpeeds.right);
-
-      WheelStatusMessage wheelStatus = getCurrentWheelStatus();
-
-      // 1 - back right, 2 - front right, 3 - front left, 4 - back left
-
-      frontLeftOutput  = frontLeftWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[2]),  targetWheelSpeeds.left.value());
-      frontRightOutput = frontRightWheelController->Calculate( rpmToVelocity(wheelStatus.velocity[1]),  targetWheelSpeeds.right.value());
-      backLeftOutput   = backLeftWheelController->Calculate(   rpmToVelocity(wheelStatus.velocity[3]),  targetWheelSpeeds.left.value());
-      backRightOutput  = backRightWheelController->Calculate(  rpmToVelocity(wheelStatus.velocity[0]),  targetWheelSpeeds.right.value());
-
-      //double rightOutput  = backRightWheelController->Calculate(  rpmToVelocity((wheelStatus.velocity[0] + wheelStatus.velocity[1]) / 2 ),  targetWheelSpeeds.right.value());
-      //double leftOutput   = backLeftWheelController->Calculate(   rpmToVelocity((wheelStatus.velocity[3] + wheelStatus.velocity[2]) / 2 ),  targetWheelSpeeds.left.value());
-
-
-      // wheel data is
-      // 3 - back left
-      // 2 - front left
-      // 0 - back right
-      // 1 - front right
-
-      WheelVoltageMessage message = {
-        uint64_t(currentMicro - startupTimestamp),
-        
-        {
-          int16_t (normalizeMotorVoltage(backRightOutput, backRightFeedforward)),
-          int16_t (normalizeMotorVoltage(frontRightOutput, frontRightFeedforward)),
-          int16_t (normalizeMotorVoltage(frontLeftOutput, frontLeftFeedforward)),
-          int16_t (normalizeMotorVoltage(backLeftOutput, backLeftFeedforward))
-        }
-      };
-
-      std::stringstream packed;
-      msgpack::pack(packed, message);
-
-      packed.seekg(0);
-      
-      redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
-    } else {
-      std::cout << "profile complete!" << std::endl;
-      profileComplete = true;
-    }
+    packed.seekg(0);
+    
+    redis->set(WHEEL_VOLTAGE_COMMAND_KEY, packed.str()); 
   }
 
   lastCalibrationRun = lastCalibrationRun * -1;
