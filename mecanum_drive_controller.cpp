@@ -77,6 +77,7 @@ const string WHEEL_VELOCITY_COMMAND_KEY = "rover_wheel_velocity_command";
 
 const string WHEEL_VOLTAGE_COMMAND_KEY = "rover_wheel_voltage_command";
 const string WHEEL_STATUS_KEY = "rover_wheel_status";
+const string LOCAL_ROTATION_OFFSET_KEY = "rover_localization_rotation_offset";
 
 const string TRAJECTORY_PROFILE_KEY = "rover_trajectory_profile";
 const string TRAJECTORY_SAMPLE_KEY = "rover_trajectory_sample";
@@ -91,6 +92,7 @@ const string CONTROLLER_KEY = "rover_controller";
 const string CONTROLLER_STATE_KEY = "rover_control_state";
 
 const string STOP_WHEELS_COMMAND_KEY = "STOP_WHEELS";
+const string SET_ORIGIN_COMMAND_KEY = "SET_ORIGIN";
 const string RUN_CALIBRATION_COMMAND_KEY = "RUN_CALIBRATION";
 const string RUN_TRAJECTORY_COMMAND_KEY = "RUN_ACTIVE_TRAJECTORY";
 const string GOTO_HOME_LOCATION_COMMAND_KEY = "GOTO_HOME";
@@ -153,6 +155,8 @@ double wheelMotorFeedforwardkA = 0.00002;
 
 int16_t minWheelVoltage = -30000;
 int16_t maxWheelVoltage = 30000;
+
+frc::Rotation2d rotationOffset;
 
 frc::MecanumDriveKinematics* driveKinematics;
 frc::HolonomicDriveController* controller;
@@ -221,7 +225,9 @@ struct PoseMessage {
   std::array<FLT, 3> pos = {0.0, 0.0, 0.0};
   std::array<FLT, 4> rot = {0.0, 0.0, 0.0, 0.0};
 
-  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot)
+  FLT radians = 0.0;
+
+  MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, rot, radians)
 };
 
 PoseMessage poseMessageFromPose2d(uint64_t timestamp, FLT trackerTimestamp, frc::Pose2d pose) {
@@ -238,18 +244,19 @@ PoseMessage poseMessageFromPose2d(uint64_t timestamp, FLT trackerTimestamp, frc:
   message.pos[1] = translation.Y().value();
   message.pos[2] = 0.0;
 
-  double yaw = rotation.Radians().value();
+  double yaw = rotation.Degrees().value();
+  
+  double Rx = 0.0;
+  double Ry = 0.0;
+  double Rz = rotation.Degrees().value();
 
   // x, y, z, w
-  /*message.rot[0] = cos(yaw/2) * sin(yaw/2);
-  message.rot[1] = cos(yaw/2) * sin(yaw/2);
-  message.rot[2] = sin(yaw/2) * cos(yaw/2);
-  message.rot[3] = cos(yaw/2) * sin(yaw/2);*/
+  message.rot[0] = (cos(Rx/2) * cos(Ry/2) * cos(Rz/2) + sin(Rx/2) * sin(Ry/2) * sin(Rz/2));
+  message.rot[1] = (sin(Rx/2) * cos(Ry/2) * cos(Rz/2) - cos(Rx/2) * sin(Ry/2) * sin(Rz/2));
+  message.rot[2] = (cos(Rx/2) * sin(Ry/2) * cos(Rz/2) + sin(Rx/2) * cos(Ry/2) * sin(Rz/2));
+  message.rot[3] = (cos(Rx/2) * cos(Ry/2) * sin(Rz/2) - sin(Rx/2) * sin(Ry/2) * cos(Rz/2));
 
-  message.rot[0] = 0.0;
-  message.rot[1] = 0.0;
-  message.rot[2] = 0.0;
-  message.rot[3] = 0.0;
+  message.radians = rotation.Radians().value();
   
   return message;
 }
@@ -264,9 +271,26 @@ struct VelocityMessage {
   MSGPACK_DEFINE_MAP(timestamp, trackerTimestamp, pos, theta)
 };
 
+struct poseInfo {
+  poseInfo(PoseMessage _localizedPoseMessage, VelocityMessage _messageVelocity, frc::Pose2d _pose, frc::Pose2d _odometryPose) {
+    localizedPoseMessage = _localizedPoseMessage;
+    messageVelocity      = _messageVelocity;
+    pose                 = _pose;
+    odometryPose         = _odometryPose;
+  }
+
+  PoseMessage localizedPoseMessage;
+  VelocityMessage messageVelocity;
+  
+  frc::Pose2d pose;
+  frc::Pose2d odometryPose;
+};
+
 struct ControllerStateMessage {
   ControllerStateMessage(
     uint64_t _timestamp,
+
+    poseInfo _currentPose,
     
     double _targetChassisVelocityX,
     double _targetChassisVelocityY,
@@ -326,6 +350,12 @@ struct ControllerStateMessage {
     double _backRightMotorOutput
   ) {
     timestamp = _timestamp;
+
+    localizedPose = poseMessageFromPose2d(
+      _timestamp,
+      _currentPose.localizedPoseMessage.trackerTimestamp,
+      _currentPose.pose
+    );
 
     targetChassisVelocityX = _targetChassisVelocityX;
     targetChassisVelocityY = _targetChassisVelocityY;
@@ -396,6 +426,8 @@ struct ControllerStateMessage {
 
   uint64_t timestamp = 0;
 
+  PoseMessage localizedPose;
+
   double targetChassisVelocityX = 0;
   double targetChassisVelocityY = 0;
 
@@ -464,6 +496,8 @@ struct ControllerStateMessage {
 
   MSGPACK_DEFINE_MAP(
     timestamp,
+
+    localizedPose,
 
     targetChassisVelocityX,
     targetChassisVelocityY,
@@ -714,21 +748,6 @@ void intHandler(int dummy) {
 	keepRunning = 0;
 }
 
-struct poseInfo {
-  poseInfo(PoseMessage _localizedPoseMessage, VelocityMessage _messageVelocity, frc::Pose2d _pose, frc::Pose2d _odometryPose) {
-    localizedPoseMessage = _localizedPoseMessage;
-    messageVelocity      = _messageVelocity;
-    pose                 = _pose;
-    odometryPose         = _odometryPose;
-  }
-
-  PoseMessage localizedPoseMessage;
-  VelocityMessage messageVelocity;
-  
-  frc::Pose2d pose;
-  frc::Pose2d odometryPose;
-};
-
 frc::Rotation2d quatToRotation2d(PoseMessage poseMessage) {
   frc::Rotation2d rotation = frc::Rotation2d(
     units::radian_t(
@@ -795,7 +814,7 @@ poseInfo getCurrentPose() {
   frc::Pose2d localizedPose2d = frc::Pose2d(
     units::meter_t(localizedPoseMessage.pos[0] * -1),
     units::meter_t(localizedPoseMessage.pos[1] * -1),
-    localizedHeading
+    localizedHeading + rotationOffset
   );
 
   // odometry
@@ -1260,6 +1279,8 @@ void publishControlState(
   ControllerStateMessage message = {
     timestamp,
 
+    currentPose,
+
     targetChassisVelocityX,
     targetChassisVelocityY,
 
@@ -1352,6 +1373,7 @@ enum commandTypes {
   RUN_TRAJECTORY_COMMAND,
   RUN_CALIBRATION_COMMAND,
   GOTO_HOME_COMMAND,
+  SET_ORIGIN_COMMAND,
 
   UNKNOWN_COMMAND
 };
@@ -1370,6 +1392,7 @@ commandTypes getCommandType(std::string const& commandType) {
   if(commandType == RUN_CALIBRATION_COMMAND_KEY) return RUN_CALIBRATION_COMMAND;
   if(commandType == RUN_TRAJECTORY_COMMAND_KEY) return RUN_TRAJECTORY_COMMAND;
   if(commandType == GOTO_HOME_LOCATION_COMMAND_KEY) return GOTO_HOME_COMMAND;
+  if(commandType == SET_ORIGIN_COMMAND_KEY) return SET_ORIGIN_COMMAND;
 
   return UNKNOWN_COMMAND;
 }
@@ -2043,8 +2066,23 @@ int main(int argc, char **argv) {
     updateParameters(parametersMessage);
   }
 
-  poseInfo robotPose = getCurrentPose();
+  auto priorRotationOffset = redis->get(LOCAL_ROTATION_OFFSET_KEY);
 
+  if(priorRotationOffset) {
+    string rotationOffsetString = *priorRotationOffset;
+
+    double offset = atof(rotationOffsetString.c_str());
+    rotationOffset = frc::Rotation2d(units::radian_t(offset));
+    std::cout << "Rotation offset prior: " << rotationOffset.Radians().value() << std::endl;
+  } else {
+    std::cout << "WARNING: No prior rotation offset was set, assuming current rotation is axis-aligned with origin!" << std::endl;
+    
+    poseInfo currentPose = getCurrentPose();
+    rotationOffset = -currentPose.pose.Rotation();
+    
+    driveOdometry->ResetPosition(currentPose.pose, frc::Rotation2d(0_deg));
+  }
+  
   auto waypoints = redis->get(TRAJECTORY_KEY);
 
   if(waypoints) {
@@ -2119,6 +2157,23 @@ int main(int argc, char **argv) {
                   profileActiveTrajectory();
                   runActiveTrajectory();
                 }
+
+                break;
+              }
+
+            case SET_ORIGIN_COMMAND:
+              std::cout << "Set origin success, resetting rotation offset and wheel odometry" << std::endl;
+
+              {
+                rotationOffset = frc::Rotation2d(0_deg);
+                poseInfo currentPose = getCurrentPose();
+                rotationOffset = -currentPose.pose.Rotation();
+
+                std::cout << "Set rotation offset to: " << rotationOffset.Degrees().value() << std::endl;
+
+                driveOdometry->ResetPosition(currentPose.pose, frc::Rotation2d(0_deg));
+
+                redis->set(LOCAL_ROTATION_OFFSET_KEY, std::to_string(rotationOffset.Radians().value()));
 
                 break;
               }
