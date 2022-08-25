@@ -1567,7 +1567,7 @@ void runActiveTrajectory() {
 
     redis->publish(TRAJECTORY_SAMPLE_KEY, trajectoryInfoJSON.dump()); 
     
-    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, startingRobotPose.pose.Rotation());
+    targetChassisSpeeds = controller->Calculate(robotPose.pose, state, state.pose.Rotation());
     
     targetWheelSpeeds = driveKinematics->ToWheelSpeeds(targetChassisSpeeds);
 
